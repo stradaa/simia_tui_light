@@ -22,6 +22,7 @@ DEFAULT_CONFIG = {
     "tasks": ["simple touch", "center out reach"],
     "note_key": "n",
     "mark_key": "m",
+    "liquid_key": "l",
     "undo_key": "u",
     "reload_key": "r",
     "stop_key": "q",
@@ -121,9 +122,9 @@ class Logger:
         file_date = datetime.now().strftime("%y%m%d")
         print("Behaviorist(s): ", end="", flush=True)
         behaviorists = input().strip()
-        print("Animal ID: ", end="", flush=True)
+        print("Simia (monkey): ", end="", flush=True)
         animal_id = input().strip()
-        print("Animal weight: ", end="", flush=True)
+        print("Weight: ", end="", flush=True)
         animal_weight = input().strip()
         print("Optional notes: ", end="", flush=True)
         notes = input().strip()
@@ -138,8 +139,8 @@ class Logger:
             "# Session Log",
             f"- Date: {date_str}",
             f"- Behaviorist(s): {behaviorists or 'N/A'}",
-            f"- Animal ID: {animal_id or 'N/A'}",
-            f"- Animal weight: {animal_weight or 'N/A'}",
+            f"- Simia: {animal_id or 'N/A'}",
+            f"- Weight: {animal_weight or 'N/A'}",
             f"- Notes: {notes or 'N/A'}",
             f"- Started: [{self.tshort()}]",
             "",
@@ -210,7 +211,7 @@ class Logger:
             key = m.get("key", "?")
             label = m.get("label", m.get("text", ""))
             self.print_left(f"  {key} = {label}")
-        self.print_left("  n = note, m = mark, u = undo, r = reload config, h = help, q = stop")
+        self.print_left("  n = note, l = liquid, m = mark, u = undo, r = reload config, h = help, q = stop")
         self.print_left("Press a key...")
 
     def clear_line(self):
@@ -239,6 +240,24 @@ class Logger:
     def prompt_trials(self):
         self.print_left("Trials (successful/failed), e.g. 12/3: ")
         return input().strip()
+
+    def prompt_liquid(self):
+        self.print_left("Liquid amount (mL): ")
+        amount = input().strip()
+        self.print_left("Liquid type (select or type custom):")
+        self.print_left("  1 = water")
+        self.print_left("  2 = diluted juice")
+        self.print_left("Type: ")
+        liquid_type = input().strip()
+        if liquid_type == "1":
+            liquid_type = "water"
+        elif liquid_type == "2":
+            liquid_type = "diluted juice"
+        if amount and liquid_type:
+            return f"LIQUID: {amount} mL ({liquid_type})"
+        if amount:
+            return f"LIQUID: {amount} mL"
+        return "LIQUID"
 
 
 def main():
@@ -270,6 +289,19 @@ def main():
 
                     termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, inp._old)
                 logger.note()
+                if not IS_WINDOWS:
+                    import tty
+
+                    tty.setraw(sys.stdin.fileno())
+                continue
+            if key == logger.config.get("liquid_key", "l"):
+                if not IS_WINDOWS:
+                    import termios
+
+                    termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, inp._old)
+                entry = logger.prompt_liquid()
+                if entry:
+                    logger.append_entry(entry)
                 if not IS_WINDOWS:
                     import tty
 
