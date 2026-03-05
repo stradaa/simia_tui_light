@@ -120,20 +120,27 @@ class Logger:
     def start_session(self):
         date_str = datetime.now().strftime("%Y-%m-%d")
         file_date = datetime.now().strftime("%y%m%d")
+
         print("Behaviorist(s): ", end="", flush=True)
         behaviorists = input().strip()
+
         print("Simia (monkey): ", end="", flush=True)
         animal_id = input().strip()
+
         print("Weight: ", end="", flush=True)
         animal_weight = input().strip()
+
         print("Optional notes: ", end="", flush=True)
         notes = input().strip()
 
         out_dir = self.ensure_output_dir()
-        beh_part = self.sanitize(behaviorists) if behaviorists else "behaviorists"
+
+        # 🔹 Filename is now based on SIMIA, not behaviorist
         animal_part = self.sanitize(animal_id) if animal_id else "animal"
-        filename = f"{file_date}_{beh_part}_{animal_part}.md"
-        self.file_path = out_dir / filename
+        filename = f"{file_date}_{animal_part}.md"
+
+        base_path = out_dir / filename
+        self.file_path = self.next_available_path(base_path)
 
         header = [
             "# Session Log",
@@ -146,9 +153,11 @@ class Logger:
             "",
             "## Events",
         ]
+
         self.entries = header.copy()
         self.write_all()
         self.session_started = True
+
         print(f"Session file: {self.file_path}")
 
     def write_all(self):
@@ -258,6 +267,24 @@ class Logger:
         if amount:
             return f"LIQUID: {amount} mL"
         return "LIQUID"
+    
+    def next_available_path(self, path: Path) -> Path:
+        """
+        If path exists, append _01, _02, ... before the suffix.
+        """
+        if not path.exists():
+            return path
+
+        stem = path.stem
+        suffix = path.suffix
+        parent = path.parent
+
+        i = 1
+        while True:
+            candidate = parent / f"{stem}_{i:02d}{suffix}"
+            if not candidate.exists():
+                return candidate
+            i += 1
 
 
 def main():
