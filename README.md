@@ -21,10 +21,12 @@ Other keys:
 
 ## Startup flow improvements
 - Professional ASCII welcome banner on launch.
-- Session fields can be reordered at startup per session (for example, logging before weight).
+- Session fields can be selectively filled at startup per session (for example, `1,2` to fill only behaviorist and monkey).
 - During session setup:
   - `/back` goes to previous field
   - `/skip` leaves current field blank
+  - Press `Enter` at the selection prompt to fill all fields
+  - Unselected fields stay blank and can be updated later with `/edit`
 - During live logging:
   - Press `/` then run `/edit Weight` (or `/edit 3`) to update metadata header fields mid-session.
   - Press `l` then choose `2` to set `Total liquid consumed (mL)` in the header at session end.

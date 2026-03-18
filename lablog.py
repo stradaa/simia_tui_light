@@ -219,55 +219,54 @@ class Logger:
                 normalized.append(field)
         return normalized
 
-    def choose_field_order(self, fields):
+    def choose_startup_fields(self, fields):
         self.print_box(
             "Session Setup",
             [
-                "Choose entry order for this session.",
-                "Press Enter to keep default.",
-                "Use comma list, e.g. 1,2 or 2,1,4,3",
+                "Choose which fields to fill out now.",
+                "Press Enter to fill all fields.",
+                "Use comma list, e.g. 1,2 to fill only those now.",
             ],
         )
         for i, field in enumerate(fields, start=1):
             self.print_left(f"  {i}. {field['label']}")
-        self.print_left("Order: ")
-        order_text = input().strip()
-        if not order_text:
+        self.print_left("Fill now: ")
+        selection_text = input().strip()
+        if not selection_text:
             return list(range(len(fields)))
 
-        parts = [p.strip() for p in order_text.split(",") if p.strip()]
+        parts = [p.strip() for p in selection_text.split(",") if p.strip()]
         if any(not p.isdigit() for p in parts):
-            self.print_left("Invalid order. Using default.")
+            self.print_left("Invalid selection. Filling all fields.")
             return list(range(len(fields)))
 
         selected = [int(p) - 1 for p in parts]
         if len(set(selected)) != len(selected):
-            self.print_left("Invalid order. Using default.")
+            self.print_left("Invalid selection. Filling all fields.")
             return list(range(len(fields)))
         if any(i < 0 or i >= len(fields) for i in selected):
-            self.print_left("Invalid order. Using default.")
+            self.print_left("Invalid selection. Filling all fields.")
             return list(range(len(fields)))
-
-        remaining = [i for i in range(len(fields)) if i not in selected]
-        return selected + remaining
+        return selected
 
     def prompt_session_data(self):
         fields = self.get_session_fields()
-        order = self.choose_field_order(fields)
+        selected = self.choose_startup_fields(fields)
         data = {}
-        ordered_fields = [fields[i] for i in order]
+        startup_fields = [fields[i] for i in selected]
 
         self.print_box(
             "Entry Controls",
             [
                 "Type /back to edit previous field",
                 "Type /skip to leave a field blank",
+                "Unselected fields stay blank for later /edit",
             ],
         )
 
         i = 0
-        while i < len(ordered_fields):
-            field = ordered_fields[i]
+        while i < len(startup_fields):
+            field = startup_fields[i]
             self.print_left(f"{field['label']}: ")
             value = input().strip()
             if value.lower() == "/back":
