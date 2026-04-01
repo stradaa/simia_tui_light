@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import json
 import os
+import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -16,10 +17,22 @@ DEFAULT_CONFIG = {
     "session_fields": [
         {"id": "behaviorists", "label": "Behaviorist(s)"},
         {"id": "animal_id", "label": "Simia (monkey)"},
+        {"id": "project", "label": "Project"},
         {"id": "animal_weight", "label": "Weight"},
         {"id": "total_liquid_ml", "label": "Total liquid consumed (mL)"},
         {"id": "notes", "label": "Optional notes"},
     ],
+    "field_options": {
+        "behaviorists": [],
+        "animal_id": [],
+        "project": [],
+    },
+    "field_defaults": {
+        "behaviorists": "",
+        "animal_id": "",
+        "project": "",
+    },
+    "copy_on_stop_dir": "",
     "tasks": ["simple touch", "center out reach"],
     "note_key": "n",
     "mark_key": "m",
@@ -36,6 +49,35 @@ DEFAULT_CONFIG = {
 IS_WINDOWS = os.name == "nt"
 
 
+def normalize_config(cfg):
+    merged = DEFAULT_CONFIG.copy()
+    merged.update({k: v for k, v in cfg.items() if k in merged})
+
+    if isinstance(cfg.get("macros"), list):
+        merged["macros"] = cfg["macros"]
+
+    if isinstance(cfg.get("session_fields"), list):
+        merged["session_fields"] = cfg["session_fields"]
+
+    field_options = DEFAULT_CONFIG["field_options"].copy()
+    cfg_field_options = cfg.get("field_options", {})
+    if isinstance(cfg_field_options, dict):
+        for key, value in cfg_field_options.items():
+            if isinstance(value, list):
+                field_options[key] = [str(item).strip() for item in value if str(item).strip()]
+    merged["field_options"] = field_options
+
+    field_defaults = DEFAULT_CONFIG["field_defaults"].copy()
+    cfg_field_defaults = cfg.get("field_defaults", {})
+    if isinstance(cfg_field_defaults, dict):
+        for key, value in cfg_field_defaults.items():
+            if value is None:
+                continue
+            field_defaults[key] = str(value).strip()
+    merged["field_defaults"] = field_defaults
+    return merged
+
+
 def load_config(path: Path):
     if not path.exists():
         return DEFAULT_CONFIG, False
@@ -45,12 +87,66 @@ def load_config(path: Path):
     except Exception:
         return DEFAULT_CONFIG, False
 
-    merged = DEFAULT_CONFIG.copy()
-    merged.update({k: v for k, v in cfg.items() if k in merged})
-    # Ensure macros list is valid
-    if isinstance(cfg.get("macros"), list):
-        merged["macros"] = cfg["macros"]
-    return merged, True
+    return normalize_config(cfg), True
+
+
+def prompt_list_values(prompt: str):
+    print(prompt)
+    print("Enter comma-separated values. Leave blank for none.")
+    raw = input("> ").strip()
+    if not raw:
+        return []
+    return [part.strip() for part in raw.split(",") if part.strip()]
+
+
+def prompt_default_value(label: str, options):
+    if not options:
+        return ""
+
+    print(f"Default for {label}:")
+    for i, option in enumerate(options, start=1):
+        print(f"  {i}. {option}")
+    print("Press Enter for no default.")
+    raw = input("> ").strip()
+    if not raw:
+        return ""
+    if raw.isdigit():
+        idx = int(raw)
+        if 1 <= idx <= len(options):
+            return options[idx - 1]
+    return raw
+
+
+def create_config_interactively(path: Path):
+    print("")
+    print("lablog_config.json was not found or could not be read.")
+    print("Creating a user config now.")
+
+    cfg = json.loads(json.dumps(DEFAULT_CONFIG))
+
+    behaviorists = prompt_list_values("Behaviorist options")
+    animals = prompt_list_values("Animal options")
+    projects = prompt_list_values("Project options")
+
+    cfg["field_options"]["behaviorists"] = behaviorists
+    cfg["field_options"]["animal_id"] = animals
+    cfg["field_options"]["project"] = projects
+
+    cfg["field_defaults"]["behaviorists"] = prompt_default_value("Behaviorist(s)", behaviorists)
+    cfg["field_defaults"]["animal_id"] = prompt_default_value("Simia (monkey)", animals)
+    cfg["field_defaults"]["project"] = prompt_default_value("Project", projects)
+
+    print("Optional copy-on-stop parent directory:")
+    print("Example: C:\\Users\\Alex\\Documents\\Academics\\Penn")
+    print("Leave blank to disable.")
+    cfg["copy_on_stop_dir"] = input("> ").strip()
+
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=2)
+        f.write("\n")
+
+    print(f"Created config: {path}")
+    return normalize_config(cfg)
 
 
 class RawInput:
@@ -249,6 +345,98 @@ class Logger:
             return list(range(len(fields)))
         return selected
 
+    def get_field_options(self, field_id: str):
+        field_options = self.config.get("field_options", {})
+        if not isinstance(field_options, dict):
+            return []
+        values = field_options.get(field_id, [])
+        if not isinstance(values, list):
+            return []
+        return [str(value).strip() for value in values if str(value).strip()]
+
+    def get_field_default(self, field_id: str):
+        field_defaults = self.config.get("field_defaults", {})
+        if not isinstance(field_defaults, dict):
+            return ""
+        value = field_defaults.get(field_id, "")
+        return str(value).strip() if value is not None else ""
+
+    def parse_option_selection(self, raw: str, options):
+        parts = [part.strip() for part in raw.split(",") if part.strip()]
+        if not parts:
+            return None
+        if all(part.isdigit() for part in parts):
+            values = []
+            for part in parts:
+                idx = int(part)
+                if idx < 1 or idx > len(options):
+                    return None
+                values.append(options[idx - 1])
+            return ", ".join(values)
+        return raw
+
+    def prompt_field_value(self, field):
+        options = self.get_field_options(field["id"])
+        default_value = self.get_field_default(field["id"])
+
+        self.print_left(f"{field['label']}: ")
+        if options:
+            self.print_left("  Options:")
+            for i, option in enumerate(options, start=1):
+                suffix = " [default]" if option == default_value and default_value else ""
+                self.print_left(f"    {i}. {option}{suffix}")
+            self.print_left("  Enter a number, comma list, custom text, /skip, or /back.")
+            if default_value:
+                self.print_left("  Press Enter to use the default.")
+
+        value = input().strip()
+        if not value:
+            return default_value if options or default_value else ""
+        if options:
+            parsed = self.parse_option_selection(value, options)
+            if parsed is None:
+                self.print_left("Invalid selection.")
+                return None
+            return parsed
+        return value
+
+    def get_copy_on_stop_dir(self):
+        value = self.config.get("copy_on_stop_dir", "")
+        return str(value).strip() if value is not None else ""
+
+    def copy_log_to_external_dir(self):
+        if not self.file_path:
+            return
+
+        copy_root_raw = self.get_copy_on_stop_dir()
+        if not copy_root_raw:
+            return
+
+        copy_root = Path(copy_root_raw).expanduser()
+        session_folder = copy_root / datetime.now().strftime("%y%m%d")
+
+        if not session_folder.is_dir():
+            self.print_left(f"Copy target not found: {session_folder}")
+            self.print_left("Create this folder now? [y/N]: ")
+            choice = input().strip().lower()
+            if choice not in ("y", "yes"):
+                self.print_left("Copy skipped.")
+                return
+            try:
+                session_folder.mkdir(parents=True, exist_ok=True)
+            except Exception as exc:
+                self.print_left(f"Could not create folder: {exc}")
+                return
+
+        target_path = session_folder / self.file_path.name
+        try:
+            shutil.copy2(self.file_path, target_path)
+        except Exception as exc:
+            self.print_left(f"Copy failed: {exc}")
+            return
+
+        self.print_left(f"Copied log to {target_path}")
+
     def prompt_session_data(self):
         fields = self.get_session_fields()
         selected = self.choose_startup_fields(fields)
@@ -267,8 +455,9 @@ class Logger:
         i = 0
         while i < len(startup_fields):
             field = startup_fields[i]
-            self.print_left(f"{field['label']}: ")
-            value = input().strip()
+            value = self.prompt_field_value(field)
+            if value is None:
+                continue
             if value.lower() == "/back":
                 if i > 0:
                     i -= 1
@@ -316,8 +505,10 @@ class Logger:
             self.show_session_fields()
             return
         current = self.session_data.get(field["id"], "")
-        self.print_left(f"New value for {field['label']} (current: {current or 'N/A'}): ")
-        new_value = input().strip()
+        self.print_left(f"Editing {field['label']} (current: {current or 'N/A'}).")
+        new_value = self.prompt_field_value(field)
+        if new_value is None:
+            return
         if new_value.lower() == "/skip":
             new_value = ""
         self.session_data[field["id"]] = new_value
@@ -405,6 +596,7 @@ class Logger:
 
     def stop(self):
         self.append_entry("SESSION END")
+        self.copy_log_to_external_dir()
         self.session_started = False
 
     def reload_config(self):
@@ -522,7 +714,8 @@ def main():
     logger = Logger(config_path)
 
     if not logger.config_loaded:
-        print("Using default config (lablog_config.json not found or invalid).")
+        logger.config = create_config_interactively(config_path)
+        logger.config_loaded = True
 
     logger.start_session()
     logger.print_menu()
