@@ -58,15 +58,26 @@ If `copy_on_stop_dir` is set, the session log is still always saved locally in `
     { "id": "notes", "label": "Optional notes" }
   ],
   "field_options": {
-    "behaviorists": ["Alex", "Sam"],
-    "animal_id": ["SimiaA", "SimiaB"],
-    "project": ["Motor mapping", "Reach training"]
+    "behaviorists": ["Alex", "Jake", "Indie", "Seokhee", "Katie", "Betty"],
+    "animal_id": ["Bowser", "Snorlax", "Troopa"],
+    "project": ["BCI (Cursor Control)"]
   },
   "field_defaults": {
     "behaviorists": "Alex",
-    "animal_id": "SimiaA",
-    "project": "Motor mapping"
+    "animal_id": "Bowser",
+    "project": "BCI (Cursor Control)"
   },
-  "copy_on_stop_dir": "C:\\Users\\Alex\\Documents\\Academics\\Penn"
+  "copy_on_stop_dir": "/mnt/sraid/Bowser_Behavior_AlexRig",
+  "tasks": ["simple touch", "center out reach"],
+  "note_key": "n",
+  "mark_key": "m",
+  "liquid_key": "l",
+  "undo_key": "u",
+  "reload_key": "r",
+  "print_key": "p",
+  "stop_key": "q",
+  "help_key": "h",
+  "timestamp_format": "%Y-%m-%d %H:%M:%S",
+  "line_time_format": "%H:%M:%S"
 }
 ```
