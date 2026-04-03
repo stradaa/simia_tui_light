@@ -193,6 +193,7 @@ class Logger:
         self.config_path = config_path
         self.config, self.config_loaded = load_config(config_path)
         self.entries = []
+        self.event_line_counts = []
         self.file_path = None
         self.session_started = False
         self.recording_index = 0
@@ -556,23 +557,37 @@ class Logger:
             f.write("\n".join(self.entries) + "\n")
 
     def append_entry(self, text: str):
-        rendered = self.render_entry_text(text)
-        line = f"- [{self.tshort()}] {rendered}"
-        self.entries.append(line)
+        lines = self.render_entry_lines(text)
+        self.entries.extend(lines)
+        self.event_line_counts.append(len(lines))
         self.write_all()
-        sys.stdout.write("\r" + line + "\n")
-        sys.stdout.flush()
+        for line in lines:
+            sys.stdout.write("\r" + line + "\n")
+            sys.stdout.flush()
 
-    def render_entry_text(self, text: str) -> str:
+    def render_entry_lines(self, text: str):
+        ts = self.tshort()
         upper = text.strip().upper()
         if upper == "START RECORDING":
             self.recording_index += 1
-            return f"START RECORDING (REC {self.recording_index})"
+            return self.wrap_standalone_line(f"[{ts}] >>> REC {self.recording_index} START >>>")
         if upper == "STOP RECORDING":
             if self.recording_index > 0:
-                return f"STOP RECORDING (REC {self.recording_index})"
-            return "STOP RECORDING (REC ?)"
-        return text
+                rec_label = str(self.recording_index)
+            else:
+                rec_label = "?"
+            return self.wrap_standalone_line(f"[{ts}] <<< REC {rec_label} STOP <<<")
+        if text.strip() == "---":
+            return self.wrap_standalone_line("---")
+        return [f"- [{ts}] {text}"]
+
+    def wrap_standalone_line(self, line: str):
+        lines = []
+        if self.entries and self.entries[-1] != "":
+            lines.append("")
+        lines.append(line)
+        lines.append("")
+        return lines
 
     def mark(self):
         self.append_entry("---")
@@ -585,13 +600,13 @@ class Logger:
             self.append_entry(note)
 
     def undo(self):
-        # Avoid undoing header lines
-        for i in range(len(self.entries) - 1, -1, -1):
-            if self.entries[i].startswith("- ["):
-                removed = self.entries.pop(i)
-                self.write_all()
-                print(f"Undone: {removed}")
-                return
+        if self.event_line_counts:
+            count = self.event_line_counts.pop()
+            removed = self.entries[-count:]
+            del self.entries[-count:]
+            self.write_all()
+            print(f"Undone: {' | '.join(removed)}")
+            return
         print("Nothing to undo.")
 
     def stop(self):
@@ -636,7 +651,12 @@ class Logger:
         self.print_left("")
 
     def clear_line(self):
-        sys.stdout.write("\r" + (" " * 120) + "\r")
+        if sys.stdout.isatty():
+            # ANSI erase-in-line avoids wrapped whitespace when the terminal is narrow.
+            sys.stdout.write("\r\x1b[2K")
+        else:
+            width = max(shutil.get_terminal_size(fallback=(80, 24)).columns - 1, 1)
+            sys.stdout.write("\r" + (" " * width) + "\r")
         sys.stdout.flush()
 
     def print_left(self, text: str):
