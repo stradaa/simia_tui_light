@@ -19,6 +19,45 @@ Other keys:
 - `h` = help
 - `q` = stop
 
+## Export print-ready packets
+Use export mode to scan saved session logs and generate a condensed HTML packet for printing.
+
+Run:
+
+```bash
+python lablog.py --export
+```
+
+The export flow will prompt for:
+- `Simia (monkey)` as a required filter
+- `Project` as an optional filter
+- start date
+- end date
+
+This is designed so older logs without a `Project` header can still be included when you leave the project filter blank.
+
+After filtering, the script shows a preview list of matching sessions before generating the packet. Example:
+
+```text
+Matching sessions:
+  1. 2026-03-11 | project omitted | 260311_Bowser.md
+  2. 2026-03-12 | project omitted | 260312_Bowser.md
+  3. 2026-03-13 | project omitted | 260313_Bowser.md
+```
+
+If you confirm, `lablog.py` writes an HTML file into `exports/` with a filename based on the selected monkey, optional project, and date range.
+
+The generated HTML is print-optimized:
+- low-ink black-on-white styling
+- a compact `Matching Sessions` index at the top
+- one session per section with page breaks between sessions
+- session filename shown in small text for traceability
+- timestamps preserved for every event
+- event order preserved exactly as recorded
+- empty metadata fields omitted instead of shown as `N/A`
+
+Open the generated `.html` file in your browser and print it directly or print to PDF.
+
 ## Startup flow improvements
 - Professional ASCII welcome banner on launch.
 - Session fields can be selectively filled at startup per session (for example, `1,2` to fill only behaviorist and monkey).
