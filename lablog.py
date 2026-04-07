@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
+import argparse
 import json
 import os
 import shutil
 import sys
 from datetime import datetime
+from html import escape
 from pathlib import Path
 
 DEFAULT_CONFIG = {
@@ -147,6 +149,382 @@ def create_config_interactively(path: Path):
 
     print(f"Created config: {path}")
     return normalize_config(cfg)
+
+
+def prompt_with_options(label: str, options, default_value=""):
+    print(label)
+    if options:
+        for i, option in enumerate(options, start=1):
+            suffix = " [default]" if option == default_value and default_value else ""
+            print(f"  {i}. {option}{suffix}")
+    if default_value:
+        print("Press Enter to use the default, or leave blank to skip when no default is shown.")
+    raw = input("> ").strip()
+    if not raw:
+        return default_value.strip()
+    if raw.isdigit() and options:
+        idx = int(raw)
+        if 1 <= idx <= len(options):
+            return options[idx - 1]
+    return raw
+
+
+def prompt_date_value(label: str):
+    while True:
+        print(f"{label} (YYYY-MM-DD):")
+        raw = input("> ").strip()
+        try:
+            return datetime.strptime(raw, "%Y-%m-%d").date()
+        except ValueError:
+            print("Invalid date. Use YYYY-MM-DD.")
+
+
+def parse_log_file(path: Path):
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return None
+
+    if not lines or lines[0].strip() != "# Session Log":
+        return None
+
+    session = {
+        "path": path,
+        "filename": path.name,
+        "header": {},
+        "events": [],
+        "date": None,
+        "started": "",
+    }
+
+    in_events = False
+    for line in lines[1:]:
+        if line.strip() == "## Events":
+            in_events = True
+            continue
+        if in_events:
+            if line.strip():
+                session["events"].append(line.rstrip())
+            continue
+        if not line.startswith("- "):
+            continue
+        payload = line[2:]
+        if ":" not in payload:
+            continue
+        key, value = payload.split(":", 1)
+        key = key.strip()
+        value = value.strip()
+        session["header"][key] = value
+
+    date_text = session["header"].get("Date", "")
+    if date_text:
+        try:
+            session["date"] = datetime.strptime(date_text, "%Y-%m-%d").date()
+        except ValueError:
+            session["date"] = None
+
+    started_text = session["header"].get("Started", "").strip()
+    if started_text.startswith("[") and started_text.endswith("]"):
+        started_text = started_text[1:-1].strip()
+    session["started"] = started_text
+    return session
+
+
+def sort_session_key(session):
+    started = session.get("started") or ""
+    return (
+        session.get("date") or datetime.max.date(),
+        started,
+        session.get("filename", ""),
+    )
+
+
+def build_export_filename(monkey, project, start_date, end_date):
+    parts = [
+        start_date.strftime("%Y-%m-%d"),
+        "to",
+        end_date.strftime("%Y-%m-%d"),
+        monkey or "animal",
+    ]
+    if project:
+        parts.append(project)
+    safe = []
+    allowed = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
+    for part in parts:
+        cleaned = "".join(ch if ch in allowed else "_" for ch in str(part).strip())
+        safe.append(cleaned.strip("_") or "unknown")
+    return "_".join(safe) + ".html"
+
+
+def render_meta_row(label: str, value: str):
+    if not value:
+        return ""
+    return (
+        '<div class="meta-row">'
+        f'<div class="meta-label">{escape(label)}</div>'
+        f'<div class="meta-value">{escape(value)}</div>'
+        "</div>"
+    )
+
+
+def render_event_line(line: str):
+    if line.startswith("- [") and "] " in line:
+        close = line.find("] ")
+        timestamp = line[3:close]
+        text = line[close + 2 :]
+        return (
+            '<div class="event">'
+            f'<div class="event-time">{escape(timestamp)}</div>'
+            f'<div class="event-text">{escape(text)}</div>'
+            "</div>"
+        )
+    return (
+        '<div class="event">'
+        '<div class="event-time"></div>'
+        f'<div class="event-text">{escape(line)}</div>'
+        "</div>"
+    )
+
+
+def render_export_html(monkey, project, start_date, end_date, sessions):
+    generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    project_line = (
+        f"<p><strong>Project:</strong> {escape(project)}</p>"
+        if project
+        else "<p><strong>Project:</strong> All projects</p>"
+    )
+
+    sections = []
+    for session in sessions:
+        header = session["header"]
+        meta_html = "".join(
+            [
+                render_meta_row("Behaviorist(s)", header.get("Behaviorist(s)", "")),
+                render_meta_row("Weight", header.get("Weight", "")),
+                render_meta_row("Total liquid consumed (mL)", header.get("Total liquid consumed (mL)", "")),
+                render_meta_row("Optional notes", header.get("Optional notes", "")),
+            ]
+        )
+        events_html = "\n".join(render_event_line(line) for line in session["events"])
+        sections.append(
+            f"""
+<section class="session">
+  <div class="session-header">
+    <div>
+      <h2>{escape(header.get("Date", "Undated session"))}</h2>
+      <p class="session-subtitle">{escape(header.get("Simia (monkey)", monkey or ""))}</p>
+    </div>
+    <div class="session-file">{escape(session["filename"])}</div>
+  </div>
+  <div class="session-project">{escape(header.get("Project", "Project omitted"))}</div>
+  <div class="meta-grid">{meta_html}</div>
+  <div class="events">{events_html}</div>
+</section>
+""".strip()
+        )
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Lab Log Packet</title>
+  <style>
+    @page {{
+      size: letter;
+      margin: 0.6in 0.7in;
+    }}
+    body {{
+      color: #111;
+      background: #fff;
+      font-family: "Georgia", "Times New Roman", serif;
+      font-size: 11pt;
+      line-height: 1.35;
+      margin: 0;
+    }}
+    .packet-header {{
+      border-bottom: 1px solid #888;
+      margin-bottom: 18px;
+      padding-bottom: 10px;
+    }}
+    h1 {{
+      font-size: 19pt;
+      margin: 0 0 6px 0;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }}
+    .packet-header p {{
+      margin: 2px 0;
+    }}
+    .session {{
+      page-break-before: always;
+      break-before: page;
+      padding-top: 2px;
+    }}
+    .session:first-of-type {{
+      page-break-before: auto;
+      break-before: auto;
+    }}
+    .session-header {{
+      align-items: baseline;
+      border-bottom: 1px solid #bbb;
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 8px;
+      padding-bottom: 5px;
+    }}
+    h2 {{
+      font-size: 15pt;
+      margin: 0;
+      font-weight: 600;
+    }}
+    .session-subtitle {{
+      color: #444;
+      font-size: 10pt;
+      margin: 2px 0 0 0;
+    }}
+    .session-file {{
+      color: #555;
+      font-family: "Courier New", monospace;
+      font-size: 8.5pt;
+      white-space: nowrap;
+    }}
+    .session-project {{
+      font-size: 10pt;
+      margin-bottom: 8px;
+    }}
+    .meta-grid {{
+      margin-bottom: 12px;
+    }}
+    .meta-row {{
+      display: flex;
+      gap: 10px;
+      margin: 1px 0;
+    }}
+    .meta-label {{
+      color: #444;
+      flex: 0 0 160px;
+      font-size: 9.5pt;
+    }}
+    .meta-value {{
+      flex: 1 1 auto;
+      font-size: 9.5pt;
+    }}
+    .events {{
+      border-top: 1px solid #ddd;
+      padding-top: 8px;
+    }}
+    .event {{
+      display: grid;
+      gap: 10px;
+      grid-template-columns: 70px 1fr;
+      padding: 1px 0;
+    }}
+    .event-time {{
+      color: #333;
+      font-family: "Courier New", monospace;
+      font-size: 9pt;
+      white-space: nowrap;
+    }}
+    .event-text {{
+      font-size: 10pt;
+      word-break: break-word;
+    }}
+    @media print {{
+      .packet-header {{
+        page-break-after: avoid;
+      }}
+    }}
+  </style>
+</head>
+<body>
+  <header class="packet-header">
+    <h1>Lab Log Packet</h1>
+    <p><strong>Monkey:</strong> {escape(monkey)}</p>
+    {project_line}
+    <p><strong>Date range:</strong> {escape(start_date.strftime("%Y-%m-%d"))} to {escape(end_date.strftime("%Y-%m-%d"))}</p>
+    <p><strong>Sessions included:</strong> {len(sessions)}</p>
+    <p><strong>Generated:</strong> {escape(generated_at)}</p>
+  </header>
+  {"".join(sections)}
+</body>
+</html>
+"""
+
+
+def export_logs(config):
+    output_dir = Path(config.get("output_dir", "logs"))
+    if not output_dir.exists():
+        print(f"Log directory not found: {output_dir}")
+        return 1
+
+    field_options = config.get("field_options", {})
+    defaults = config.get("field_defaults", {})
+    monkey_options = field_options.get("animal_id", []) if isinstance(field_options, dict) else []
+    project_options = field_options.get("project", []) if isinstance(field_options, dict) else []
+
+    print("")
+    print("Export print-ready log packet")
+    print("Monkey is required. Project is optional.")
+    monkey = prompt_with_options("Simia (monkey):", monkey_options, str(defaults.get("animal_id", "")).strip())
+    while not monkey:
+        print("Monkey is required.")
+        monkey = prompt_with_options("Simia (monkey):", monkey_options, str(defaults.get("animal_id", "")).strip())
+
+    project = prompt_with_options("Project (optional):", project_options, "")
+    start_date = prompt_date_value("Start date")
+    end_date = prompt_date_value("End date")
+    if end_date < start_date:
+        start_date, end_date = end_date, start_date
+
+    sessions = []
+    for path in sorted(output_dir.glob("*.md")):
+        session = parse_log_file(path)
+        if not session or not session.get("date"):
+            continue
+        if session["date"] < start_date or session["date"] > end_date:
+            continue
+        animal_value = session["header"].get("Simia (monkey)", "").strip()
+        if animal_value.lower() != monkey.strip().lower():
+            continue
+        project_value = session["header"].get("Project", "").strip()
+        if project and project_value.lower() != project.strip().lower():
+            continue
+        sessions.append(session)
+
+    sessions.sort(key=sort_session_key)
+
+    print("")
+    print("Matching sessions:")
+    if not sessions:
+        print("  No matching logs found.")
+        return 1
+
+    for i, session in enumerate(sessions, start=1):
+        header = session["header"]
+        project_text = header.get("Project", "").strip() or "project omitted"
+        print(
+            f"  {i}. {header.get('Date', 'Unknown date')} | "
+            f"{project_text} | {session['filename']}"
+        )
+
+    print("")
+    print(f"Generate packet for {len(sessions)} session(s)? [y/N]: ")
+    confirm = input().strip().lower()
+    if confirm not in ("y", "yes"):
+        print("Export cancelled.")
+        return 0
+
+    export_dir = Path("exports")
+    export_dir.mkdir(parents=True, exist_ok=True)
+    output_name = build_export_filename(monkey, project, start_date, end_date)
+    output_path = export_dir / output_name
+    html = render_export_html(monkey, project, start_date, end_date, sessions)
+    output_path.write_text(html, encoding="utf-8")
+
+    print(f"Created packet: {output_path}")
+    print("Open the HTML file in a browser and print to PDF or paper.")
+    return 0
 
 
 class RawInput:
@@ -717,6 +1095,17 @@ def main():
         logger.config = create_config_interactively(config_path)
         logger.config_loaded = True
 
+    parser = argparse.ArgumentParser(description="SIMIA TUI logger")
+    parser.add_argument(
+        "--export",
+        action="store_true",
+        help="scan saved logs and generate a print-ready HTML packet",
+    )
+    args = parser.parse_args()
+
+    if args.export:
+        return export_logs(logger.config)
+
     logger.start_session()
     logger.print_menu()
 
@@ -835,9 +1224,11 @@ def main():
             if not matched:
                 print(f"Unknown key: {key}")
 
+    return 0
+
 
 if __name__ == "__main__":
     try:
-        main()
+        raise SystemExit(main())
     except KeyboardInterrupt:
         print("\nInterrupted. If you want to stop cleanly, press q next time.")
