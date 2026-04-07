@@ -293,6 +293,18 @@ def render_export_html(monkey, project, start_date, end_date, sessions):
         if project
         else "<p><strong>Project:</strong> All projects</p>"
     )
+    index_rows = []
+    for i, session in enumerate(sessions, start=1):
+        header = session["header"]
+        project_text = header.get("Project", "").strip() or "project omitted"
+        index_rows.append(
+            "<tr>"
+            f'<td class="index-num">{i}.</td>'
+            f'<td class="index-date">{escape(header.get("Date", "Unknown date"))}</td>'
+            f'<td class="index-project">{escape(project_text)}</td>'
+            f'<td class="index-file">{escape(session["filename"])}</td>'
+            "</tr>"
+        )
 
     sections = []
     for session in sessions:
@@ -359,6 +371,42 @@ def render_export_html(monkey, project, start_date, end_date, sessions):
       page-break-before: always;
       break-before: page;
       padding-top: 2px;
+    }}
+    .session-index {{
+      margin: 14px 0 18px 0;
+    }}
+    .session-index h2 {{
+      font-size: 11pt;
+      margin: 0 0 6px 0;
+      font-weight: 600;
+    }}
+    .session-index table {{
+      border-collapse: collapse;
+      width: 100%;
+    }}
+    .session-index td {{
+      border: 0;
+      font-size: 8.5pt;
+      padding: 1px 6px 1px 0;
+      vertical-align: top;
+    }}
+    .index-num {{
+      color: #333;
+      width: 28px;
+    }}
+    .index-date {{
+      width: 96px;
+      white-space: nowrap;
+    }}
+    .index-project {{
+      color: #444;
+    }}
+    .index-file {{
+      color: #555;
+      font-family: "Courier New", monospace;
+      text-align: right;
+      white-space: nowrap;
+      width: 160px;
     }}
     .session:first-of-type {{
       page-break-before: auto;
@@ -446,6 +494,12 @@ def render_export_html(monkey, project, start_date, end_date, sessions):
     <p><strong>Sessions included:</strong> {len(sessions)}</p>
     <p><strong>Generated:</strong> {escape(generated_at)}</p>
   </header>
+  <section class="session-index">
+    <h2>Matching Sessions</h2>
+    <table>
+      {"".join(index_rows)}
+    </table>
+  </section>
   {"".join(sections)}
 </body>
 </html>
