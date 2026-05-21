@@ -1,0 +1,39 @@
+{
+  "output_dir": "logs",
+  "macros": [
+    { "key": "1", "label": "START RECORDING", "text": "START RECORDING" },
+    { "key": "2", "label": "STOP RECORDING", "text": "STOP RECORDING" },
+    { "key": "3", "label": "START TASK", "text": "START TASK" },
+    { "key": "4", "label": "STOP TASK", "text": "STOP TASK" }
+  ],
+  "session_fields": [
+    { "id": "behaviorists", "label": "Behaviorist(s)" },
+    { "id": "animal_id", "label": "Simia (monkey)" },
+    { "id": "project", "label": "Project" },
+    { "id": "animal_weight", "label": "Weight" },
+    { "id": "total_liquid_ml", "label": "Total liquid consumed (mL)" },
+    { "id": "notes", "label": "Optional notes" }
+  ],
+  "field_options": {
+    "behaviorists": ["Alex", "Jake", "Marsy", "Indie", "Seokhee", "Katie", "Betty"],
+    "animal_id": ["Bowser", "Eevee", "Snorlax", "Troopa"],
+    "project": ["BCI (Cursor Control)"]
+  },
+  "field_defaults": {
+    "behaviorists": "Alex",
+    "animal_id": "Eevee",
+    "project": "BCI (Cursor Control)"
+  },
+  "copy_on_stop_dir": "/mnt/sraid/Troopa_Behavior_AlexRig",
+  "tasks": ["simple touch", "center out reach"],
+  "note_key": "n",
+  "mark_key": "m",
+  "liquid_key": "l",
+  "undo_key": "u",
+  "reload_key": "r",
+  "print_key": "p",
+  "stop_key": "q",
+  "help_key": "h",
+  "timestamp_format": "%Y-%m-%d %H:%M:%S",
+  "line_time_format": "%H:%M:%S"
+}
