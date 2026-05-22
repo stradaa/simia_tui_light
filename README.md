@@ -77,7 +77,11 @@ If `lablog_config.json` is missing or invalid, `lablog.py` now prompts for a min
 
 This config is meant to hold personalized defaults and numbered selection lists so you do not need to retype common values every session.
 
-If `copy_on_stop_dir` is set, the session log is still always saved locally in `output_dir`. At session end, `lablog.py` checks for a matching `YYMMDD` subfolder under that configured parent directory. If it is missing, the script prompts to create it, then copies the `.md` file there if you confirm.
+The session log is always saved locally in `output_dir`. If copy destinations are configured, `lablog.py` shows them during session setup after you choose `Simia (monkey)`. It picks a default only when the destination label or path contains the monkey name, clearly previews the exact `YYMMDD/<file>.md` copy path, and lets you choose another destination, type a custom path, or skip the external copy for that session.
+
+At session end, `lablog.py` checks for the matching `YYMMDD` subfolder under the selected parent directory. If it is missing, the script prompts to create it, then copies the `.md` file there if you confirm.
+
+Older configs with only `copy_on_stop_dir` still work. For multiple destinations, use `copy_on_stop_targets`.
 
 ```json
 {
@@ -106,7 +110,17 @@ If `copy_on_stop_dir` is set, the session log is still always saved locally in `
     "animal_id": "Bowser",
     "project": "BCI (Cursor Control)"
   },
-  "copy_on_stop_dir": "/mnt/sraid/Bowser_Behavior_AlexRig",
+  "copy_on_stop_targets": [
+    {
+      "label": "Bowser behavior folder",
+      "path": "/mnt/sraid/Bowser_Behavior_AlexRig"
+    },
+    {
+      "label": "Snorlax behavior folder",
+      "path": "/mnt/sraid/Snorlax_Behavior_AlexRig"
+    }
+  ],
+  "copy_on_stop_dir": "",
   "tasks": ["simple touch", "center out reach"],
   "note_key": "n",
   "mark_key": "m",

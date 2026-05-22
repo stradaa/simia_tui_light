@@ -35,6 +35,7 @@ DEFAULT_CONFIG = {
         "project": "",
     },
     "copy_on_stop_dir": "",
+    "copy_on_stop_targets": [],
     "tasks": ["simple touch", "center out reach"],
     "note_key": "n",
     "mark_key": "m",
@@ -52,7 +53,7 @@ IS_WINDOWS = os.name == "nt"
 
 
 def normalize_config(cfg):
-    merged = DEFAULT_CONFIG.copy()
+    merged = json.loads(json.dumps(DEFAULT_CONFIG))
     merged.update({k: v for k, v in cfg.items() if k in merged})
 
     if isinstance(cfg.get("macros"), list):
@@ -77,6 +78,25 @@ def normalize_config(cfg):
                 continue
             field_defaults[key] = str(value).strip()
     merged["field_defaults"] = field_defaults
+
+    copy_targets = []
+    cfg_copy_targets = cfg.get("copy_on_stop_targets", [])
+    if isinstance(cfg_copy_targets, list):
+        for item in cfg_copy_targets:
+            if isinstance(item, dict):
+                path = str(item.get("path", "")).strip()
+                label = str(item.get("label", "")).strip()
+            else:
+                path = str(item).strip()
+                label = ""
+            if path:
+                copy_targets.append({"label": label or path, "path": path})
+
+    old_copy_dir = str(cfg.get("copy_on_stop_dir", "") or "").strip()
+    if old_copy_dir and not any(target["path"] == old_copy_dir for target in copy_targets):
+        copy_targets.insert(0, {"label": "Configured copy folder", "path": old_copy_dir})
+
+    merged["copy_on_stop_targets"] = copy_targets
     return merged
 
 
@@ -119,6 +139,21 @@ def prompt_default_value(label: str, options):
     return raw
 
 
+def prompt_copy_targets():
+    print("Optional copy-on-stop destinations:")
+    print("Each destination should be the parent folder for a monkey/project.")
+    print("Example: C:\\Users\\Alex\\Documents\\Academics\\Penn\\Bowser_Behavior_AlexRig")
+    print("Enter one destination per line. Leave blank when done.")
+    targets = []
+    while True:
+        raw = input("> ").strip()
+        if not raw:
+            break
+        label = Path(raw).name or raw
+        targets.append({"label": label, "path": raw})
+    return targets
+
+
 def create_config_interactively(path: Path):
     print("")
     print("lablog_config.json was not found or could not be read.")
@@ -138,10 +173,9 @@ def create_config_interactively(path: Path):
     cfg["field_defaults"]["animal_id"] = prompt_default_value("Simia (monkey)", animals)
     cfg["field_defaults"]["project"] = prompt_default_value("Project", projects)
 
-    print("Optional copy-on-stop parent directory:")
-    print("Example: C:\\Users\\Alex\\Documents\\Academics\\Penn")
-    print("Leave blank to disable.")
-    cfg["copy_on_stop_dir"] = input("> ").strip()
+    copy_targets = prompt_copy_targets()
+    cfg["copy_on_stop_targets"] = copy_targets
+    cfg["copy_on_stop_dir"] = ""
 
     with path.open("w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2)
@@ -633,6 +667,7 @@ class Logger:
         self.session_data = {}
         self.session_date = ""
         self.session_started_at = ""
+        self.copy_target_root = None
 
     def ts(self):
         return datetime.now().strftime(self.config["timestamp_format"])
@@ -678,6 +713,7 @@ class Logger:
         self.session_started = True
 
         print(f"Session file: {self.file_path}")
+        self.prompt_copy_destination(animal_id)
 
     def build_header(self):
         fields = self.get_session_fields()
@@ -833,20 +869,146 @@ class Logger:
             return parsed
         return value
 
-    def get_copy_on_stop_dir(self):
+    def get_copy_targets(self):
+        targets = self.config.get("copy_on_stop_targets", [])
+        if not isinstance(targets, list):
+            targets = []
+
+        normalized = []
+        for item in targets:
+            if isinstance(item, dict):
+                path = str(item.get("path", "") or "").strip()
+                label = str(item.get("label", "") or "").strip()
+            else:
+                path = str(item or "").strip()
+                label = ""
+            if path:
+                normalized.append({"label": label or path, "path": path})
+
         value = self.config.get("copy_on_stop_dir", "")
-        return str(value).strip() if value is not None else ""
+        old_copy_dir = str(value).strip() if value is not None else ""
+        if old_copy_dir and not any(target["path"] == old_copy_dir for target in normalized):
+            normalized.insert(0, {"label": "Configured copy folder", "path": old_copy_dir})
+
+        return normalized
+
+    def target_matches_monkey(self, target, animal_id):
+        animal_norm = self.normalize_token(animal_id)
+        if not animal_norm:
+            return False
+        haystack = f"{target.get('label', '')} {target.get('path', '')}"
+        return animal_norm in self.normalize_token(haystack)
+
+    def session_folder_name(self):
+        if self.session_date:
+            try:
+                return datetime.strptime(self.session_date, "%Y-%m-%d").strftime("%y%m%d")
+            except ValueError:
+                pass
+        return datetime.now().strftime("%y%m%d")
+
+    def build_copy_preview_path(self, copy_root):
+        folder = Path(copy_root).expanduser() / self.session_folder_name()
+        if self.file_path:
+            return folder / self.file_path.name
+        return folder
+
+    def confirm_non_matching_copy_target(self, target, animal_id):
+        if not animal_id or self.target_matches_monkey(target, animal_id):
+            return True
+        self.print_left("")
+        self.print_left(f"Selected destination does not contain Simia name '{animal_id}'.")
+        self.print_left(f"Destination: {target['path']}")
+        self.print_left("Use this destination anyway? [y/N]: ")
+        choice = input().strip().lower()
+        return choice in ("y", "yes")
+
+    def prompt_custom_copy_target(self, animal_id):
+        self.print_left("Custom copy parent directory, or /skip: ")
+        raw = input().strip()
+        if not raw or raw.lower() == "/skip":
+            return None
+        target = {"label": Path(raw).name or raw, "path": raw}
+        if not self.confirm_non_matching_copy_target(target, animal_id):
+            self.print_left("Copy skipped.")
+            return None
+        return target
+
+    def prompt_copy_destination(self, animal_id):
+        targets = self.get_copy_targets()
+        matching_targets = [target for target in targets if self.target_matches_monkey(target, animal_id)]
+        default_target = matching_targets[0] if matching_targets else None
+
+        self.print_left("")
+        self.print_box(
+            "Copy Destination",
+            [
+                "Choose where the final Markdown log should be copied.",
+                "The default is a configured folder containing the Simia name.",
+            ],
+        )
+
+        if targets:
+            for i, target in enumerate(targets, start=1):
+                suffix = " [default]" if target == default_target else ""
+                self.print_left(f"  {i}. {target['label']}{suffix}")
+                self.print_left(f"     {target['path']}")
+        else:
+            self.print_left("No copy destinations are configured.")
+
+        if default_target:
+            self.print_left("")
+            self.print_left("At session end, this log will be copied to:")
+            self.print_left(f"  {self.build_copy_preview_path(default_target['path'])}")
+            self.print_left("Press Enter to use this destination, choose a number, type a custom path, or /skip.")
+        else:
+            self.print_left("")
+            if animal_id:
+                self.print_left(f"No configured copy destination contains Simia name '{animal_id}'.")
+            self.print_left("Choose a number, type a custom path, or /skip.")
+
+        while True:
+            self.print_left("Copy destination: ")
+            raw = input().strip()
+            if not raw:
+                selected = default_target
+            elif raw.lower() == "/skip":
+                selected = None
+            elif raw.lower() in ("change", "custom"):
+                selected = self.prompt_custom_copy_target(animal_id)
+            elif raw.isdigit() and targets:
+                idx = int(raw)
+                if 1 <= idx <= len(targets):
+                    selected = targets[idx - 1]
+                else:
+                    self.print_left("Invalid selection.")
+                    continue
+            else:
+                selected = {"label": Path(raw).name or raw, "path": raw}
+
+            if selected is None:
+                self.copy_target_root = None
+                self.print_left("External copy disabled for this session.")
+                return
+
+            if not self.confirm_non_matching_copy_target(selected, animal_id):
+                continue
+
+            self.copy_target_root = selected["path"]
+            self.print_left("Selected copy destination:")
+            self.print_left(f"  {self.build_copy_preview_path(self.copy_target_root)}")
+            return
 
     def copy_log_to_external_dir(self):
         if not self.file_path:
             return
 
-        copy_root_raw = self.get_copy_on_stop_dir()
+        copy_root_raw = str(self.copy_target_root or "").strip()
         if not copy_root_raw:
             return
 
         copy_root = Path(copy_root_raw).expanduser()
-        session_folder = copy_root / datetime.now().strftime("%y%m%d")
+        session_folder = copy_root / self.session_folder_name()
 
         if not session_folder.is_dir():
             self.print_left(f"Copy target not found: {session_folder}")
