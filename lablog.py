@@ -9,10 +9,11 @@ from html import escape
 from pathlib import Path
 
 try:
-    from ascii_art import MONKEY_FACES, HEADER
+    from ascii_art import MONKEY_FACES, HEADER, STATE_LABELS
 except ImportError:
     MONKEY_FACES = {}
     HEADER = ""
+    STATE_LABELS = {}
 
 DEFAULT_CONFIG = {
     "output_dir": "logs",
@@ -1179,6 +1180,21 @@ class Logger:
         with self.file_path.open("w", encoding="utf-8") as f:
             f.write("\n".join(self.entries) + "\n")
 
+    def print_state_label(self, text: str):
+        if not STATE_LABELS:
+            return
+        upper = text.strip().upper()
+        if upper == "START RECORDING":
+            label = STATE_LABELS.get("rec_start")
+        elif upper == "STOP RECORDING":
+            label = STATE_LABELS.get("rec_stop")
+        elif upper.startswith("LIQUID"):
+            label = STATE_LABELS.get("liquid")
+        else:
+            return
+        if label:
+            self.print_left(label)
+
     def append_entry(self, text: str):
         lines = self.render_entry_lines(text)
         self.entries.extend(lines)
@@ -1187,6 +1203,7 @@ class Logger:
         for line in lines:
             sys.stdout.write("\r" + line + "\n")
             sys.stdout.flush()
+        self.print_state_label(text)
 
     def render_entry_lines(self, text: str):
         ts = self.tshort()

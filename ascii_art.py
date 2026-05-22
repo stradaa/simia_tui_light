@@ -66,9 +66,9 @@ MONKEY_FACES = {
 
 STATE_LABELS = {
     "ready":     "(^.^)ノ  ready",
-    "recording": "(^.^)ノ  recording started   [ ● REC ]",
-    "stopped":   "( -.- )  recording stopped   [ ■ STP ]",
-    "juice":     "(*^.^*)  juice reward!        [ ~ JCE ]",
+    "rec_start": "(^.^)ノ  recording started   [ ● REC ]",
+    "rec_stop":  "( -.- )  recording stopped   [ ■ STP ]",
+    "liquid":    "(*^.^*)  liquid!        [ ~ JCE ]",
     "waiting":   "( ._. )  waiting / idle",
     "trial":     "( >_< )  trial running",
 }
