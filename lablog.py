@@ -8,6 +8,12 @@ from datetime import datetime
 from html import escape
 from pathlib import Path
 
+try:
+    from ascii_art import MONKEY_FACES, HEADER
+except ImportError:
+    MONKEY_FACES = {}
+    HEADER = ""
+
 DEFAULT_CONFIG = {
     "output_dir": "logs",
     "macros": [
@@ -751,15 +757,11 @@ class Logger:
 
     def print_welcome(self):
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        inner = 48
         self.print_left("")
-        border = "+" + ("-" * inner) + "+"
-        self.print_left(border)
-        self.print_left(f"| {'SIMIA TUI'.center(inner - 2)} |")
-        self.print_left(f"| {'Behavioral Session Logging'.center(inner - 2)} |")
-        self.print_left(border)
-        self.print_left(f"| {f'Started: {ts}'.ljust(inner - 2)} |")
-        self.print_left(border)
+        if HEADER:
+            for line in HEADER.splitlines():
+                self.print_left(line)
+        self.print_left(f"  started: {ts}")
         self.print_left("")
 
     def get_session_fields(self):
@@ -844,9 +846,36 @@ class Logger:
             return ", ".join(values)
         return raw
 
+    def prompt_animal_field(self, field, options, default_value):
+        face_keys = list(MONKEY_FACES.keys())
+        self.print_left(f"{field['label']}:")
+        self.print_left("")
+        for i, option in enumerate(options):
+            face_key = face_keys[i % len(face_keys)]
+            face_lines = MONKEY_FACES[face_key].split("\n")
+            suffix = " [default]" if option == default_value and default_value else ""
+            self.print_left(f"  {face_lines[0]}   {i + 1}. {option}{suffix}")
+            for line in face_lines[1:]:
+                self.print_left(f"  {line}")
+            self.print_left("")
+        self.print_left("  Enter number, name, /skip, or /back.")
+        if default_value:
+            self.print_left("  Press Enter for default.")
+        value = input().strip()
+        if not value:
+            return default_value if (options or default_value) else ""
+        parsed = self.parse_option_selection(value, options)
+        if parsed is None:
+            self.print_left("Invalid selection.")
+            return None
+        return parsed
+
     def prompt_field_value(self, field):
         options = self.get_field_options(field["id"])
         default_value = self.get_field_default(field["id"])
+
+        if field["id"] == "animal_id" and options and MONKEY_FACES:
+            return self.prompt_animal_field(field, options, default_value)
 
         self.print_left(f"{field['label']}: ")
         if options:
