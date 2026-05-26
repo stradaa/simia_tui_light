@@ -929,6 +929,32 @@ class Logger:
         haystack = f"{target.get('label', '')} {target.get('path', '')}"
         return animal_norm in self.normalize_token(haystack)
 
+    def infer_copy_target_for_monkey(self, targets, animal_id):
+        animal_part = self.sanitize(animal_id) if animal_id else ""
+        if not animal_part:
+            return None
+
+        marker = "_Behavior_"
+        existing_paths = {target["path"] for target in targets}
+        for target in targets:
+            path_text = str(target.get("path", "") or "").strip()
+            if not path_text:
+                continue
+            path = Path(path_text)
+            folder_name = path.name
+            marker_index = folder_name.find(marker)
+            if marker_index <= 0:
+                continue
+            inferred_name = f"{animal_part}{folder_name[marker_index:]}"
+            inferred_path = str(path.with_name(inferred_name))
+            if inferred_path in existing_paths:
+                continue
+            return {
+                "label": f"{inferred_name} (inferred)",
+                "path": inferred_path,
+            }
+        return None
+
     def session_folder_name(self):
         if self.session_date:
             try:
@@ -968,6 +994,12 @@ class Logger:
         targets = self.get_copy_targets()
         matching_targets = [target for target in targets if self.target_matches_monkey(target, animal_id)]
         default_target = matching_targets[0] if matching_targets else None
+        inferred_target = None
+        if default_target is None:
+            inferred_target = self.infer_copy_target_for_monkey(targets, animal_id)
+            if inferred_target:
+                default_target = inferred_target
+                targets = [inferred_target] + targets
 
         self.print_left("")
         self.print_box(
@@ -990,6 +1022,8 @@ class Logger:
             self.print_left("")
             self.print_left("At session end, this log will be copied to:")
             self.print_left(f"  {self.build_copy_preview_path(default_target['path'])}")
+            if inferred_target:
+                self.print_left("Inferred from the configured behavior folder pattern.")
             self.print_left("Press Enter to use this destination, choose a number, type a custom path, or /skip.")
         else:
             self.print_left("")
@@ -1461,6 +1495,10 @@ def main():
                     tty.setraw(sys.stdin.fileno())
                 continue
             if key == logger.config.get("stop_key", "q"):
+                if not IS_WINDOWS:
+                    import termios
+
+                    termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, inp._old)
                 logger.stop()
                 print("Session ended.")
                 break

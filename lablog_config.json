@@ -15,7 +15,7 @@
     { "id": "notes", "label": "Optional notes" }
   ],
   "field_options": {
-    "behaviorists": ["Alex", "Jake", "Marsy", "Indie", "Seokhee", "Katie", "Betty"],
+    "behaviorists": ["Alex", "Marsy", "Indie", "Seokhee", "Katie", "Betty"],
     "animal_id": ["Bowser", "Eevee", "Snorlax", "Troopa"],
     "project": ["BCI (Cursor Control)"]
   },
@@ -24,7 +24,7 @@
     "animal_id": "Eevee",
     "project": "BCI (Cursor Control)"
   },
-  "copy_on_stop_dir": "/mnt/sraid/Troopa_Behavior_AlexRig",
+  "copy_on_stop_dir": "/mnt/sraid/Eevee_Behavior_AlexRig",
   "tasks": ["simple touch", "center out reach"],
   "note_key": "n",
   "mark_key": "m",
