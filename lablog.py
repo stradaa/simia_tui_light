@@ -409,9 +409,12 @@ def render_export_html(monkey, project, start_date, end_date, sessions):
       margin: 2px 0;
     }}
     .session {{
-      page-break-before: always;
-      break-before: page;
+      break-inside: avoid;
+      page-break-inside: avoid;
+      break-before: auto;
+      page-break-before: auto;
       padding-top: 2px;
+      margin-top: 18px;
     }}
     .session-index {{
       margin: 14px 0 18px 0;
@@ -450,8 +453,7 @@ def render_export_html(monkey, project, start_date, end_date, sessions):
       width: 160px;
     }}
     .session:first-of-type {{
-      page-break-before: auto;
-      break-before: auto;
+      margin-top: 0;
     }}
     .session-header {{
       align-items: baseline;
@@ -522,6 +524,10 @@ def render_export_html(monkey, project, start_date, end_date, sessions):
     @media print {{
       .packet-header {{
         page-break-after: avoid;
+      }}
+      .session-index {{
+        break-after: page;
+        page-break-after: always;
       }}
     }}
   </style>

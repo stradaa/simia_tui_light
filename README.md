@@ -50,7 +50,8 @@ If you confirm, `lablog.py` writes an HTML file into `exports/` with a filename 
 The generated HTML is print-optimized:
 - low-ink black-on-white styling
 - a compact `Matching Sessions` index at the top
-- one session per section with page breaks between sessions
+- `Matching Sessions` kept on page 1 before session details begin
+- sessions kept intact while allowing multiple sessions per page when space allows
 - session filename shown in small text for traceability
 - timestamps preserved for every event
 - event order preserved exactly as recorded
