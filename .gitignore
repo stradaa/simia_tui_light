@@ -3,4 +3,5 @@ lablog_config.json
 __pycache__/
 /exports/
 /export/
+.codex
 .codex/
