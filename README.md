@@ -1,10 +1,11 @@
 # simia_tui_light
 
-A fast, pretty TUI for timestamped experiment logging with customizable macro
+A fast, minimal TUI for timestamped experiment logging with customizable macro
 hotkeys. The interface is a full-screen [Textual](https://textual.textualize.io/)
-app: a slim status bar, a scrolling color-coded event pane (each entry is printed
-exactly once — no more double-printed notes), and modal dialogs for every text
-entry so arrow keys, backspace, and multi-line paste all work correctly.
+app themed with [Rose Pine](https://rosepinetheme.com/): a slim status bar, a
+scrolling event pane (each entry printed exactly once — no more double-printed
+notes), and compact dialogs that resize to fit small terminal windows. Text entry
+happens in focused inputs so arrow keys and backspace work correctly.
 
 ## Install
 
@@ -29,7 +30,7 @@ Default macro keys:
 - `4` = STOP TASK
 
 Other keys:
-- `n` = note (opens a multi-line editor — full arrow/backspace/paste editing)
+- `n` = note (compact one-line prompt; Enter saves, Esc cancels)
 - `l` = liquid (log an event, or set the header total)
 - `m` = mark / section break
 - `u` = undo last entry (this session)

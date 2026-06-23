@@ -18,6 +18,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen, Screen
+from textual.theme import Theme
 from textual.widgets import (
     Button,
     Footer,
@@ -30,7 +31,6 @@ from textual.widgets import (
     RichLog,
     Select,
     Static,
-    TextArea,
 )
 from textual.widgets.option_list import Option
 
@@ -43,22 +43,69 @@ except ImportError:  # pragma: no cover
 
 
 # --------------------------------------------------------------------------- #
+# Rose Pine theme
+# --------------------------------------------------------------------------- #
+
+# Official Rose Pine palette.
+RP = {
+    "base": "#191724",
+    "surface": "#1f1d2e",
+    "overlay": "#26233a",
+    "muted": "#6e6a86",
+    "subtle": "#908caa",
+    "text": "#e0def4",
+    "love": "#eb6f92",
+    "gold": "#f6c177",
+    "rose": "#ebbcba",
+    "pine": "#31748f",
+    "foam": "#9ccfd8",
+    "iris": "#c4a7e7",
+}
+
+ROSE_PINE = Theme(
+    name="rose-pine",
+    primary=RP["iris"],
+    secondary=RP["pine"],
+    accent=RP["rose"],
+    foreground=RP["text"],
+    background=RP["base"],
+    surface=RP["surface"],
+    panel=RP["overlay"],
+    success=RP["foam"],
+    warning=RP["gold"],
+    error=RP["love"],
+    dark=True,
+    variables={
+        "text-muted": RP["subtle"],
+        "text-disabled": RP["muted"],
+        "border": RP["overlay"],
+        "block-cursor-foreground": RP["base"],
+        "input-selection-background": RP["overlay"],
+    },
+)
+
+
+# --------------------------------------------------------------------------- #
 # Rendering helpers
 # --------------------------------------------------------------------------- #
 
 def colorize(line: str) -> str:
-    """Turn one raw markdown log line into Rich markup for the event pane."""
+    """Turn one raw markdown log line into Rich markup for the event pane.
+
+    Kept deliberately restrained: timestamps muted, REC start/stop the only
+    strong accents, everything else close to the default foreground.
+    """
     s = line.rstrip()
     if not s.strip():
         return ""
     if s.strip() == "---":
-        return "[dim]" + ("─" * 36) + "[/]"
+        return f"[{RP['muted']}]" + ("─" * 24) + "[/]"
 
     up = s.upper()
     if ">>> REC" in up and "START" in up:
-        return f"[bold green]{escape(s)}[/]"
+        return f"[{RP['foam']}]{escape(s)}[/]"
     if "<<< REC" in up and "STOP" in up:
-        return f"[bold red]{escape(s)}[/]"
+        return f"[{RP['love']}]{escape(s)}[/]"
 
     if s.startswith("- ["):
         close = s.find("] ")
@@ -67,14 +114,14 @@ def colorize(line: str) -> str:
             body = s[close + 2 :]
             bup = body.upper()
             if bup.startswith("LIQUID"):
-                color = "cyan"
+                color = RP["pine"]
             elif bup.startswith("START TASK") or bup.startswith("STOP TASK"):
-                color = "yellow"
+                color = RP["gold"]
             elif bup.startswith("SESSION END"):
-                color = "bold magenta"
+                color = RP["iris"]
             else:
-                color = "white"
-            return f"[dim]{escape(stamp)}[/]  [{color}]{escape(body)}[/]"
+                color = RP["text"]
+            return f"[{RP['muted']}]{escape(stamp)}[/]  [{color}]{escape(body)}[/]"
     return escape(s)
 
 
@@ -127,10 +174,11 @@ class StartScreen(ModalScreen[str]):
     BINDINGS = [Binding("escape", "quit", "Quit")]
 
     def compose(self) -> ComposeResult:
-        with Vertical(classes="dialog wide"):
-            if HEADER:
-                yield Static(HEADER, classes="banner")
-            yield Static("SIMIA Lab Log", classes="dialog-title")
+        with Vertical(classes="dialog wide tall"):
+            with VerticalScroll(classes="body"):
+                if HEADER:
+                    yield Static(HEADER, classes="banner")
+                yield Static("SIMIA Lab Log", classes="dialog-title")
             with Horizontal(classes="buttons"):
                 yield Button("New session", variant="primary", id="new")
                 yield Button("Continue existing log", id="continue")
@@ -154,7 +202,7 @@ class NewSessionScreen(ModalScreen):
         self._fields = logger.get_session_fields()
 
     def compose(self) -> ComposeResult:
-        with Vertical(classes="dialog wide"):
+        with Vertical(classes="dialog wide tall"):
             yield Static("New session", classes="dialog-title")
             with VerticalScroll(classes="form"):
                 for field in self._fields:
@@ -212,7 +260,7 @@ class ContinueScreen(ModalScreen):
         return files[:40]
 
     def compose(self) -> ComposeResult:
-        with Vertical(classes="dialog wide"):
+        with Vertical(classes="dialog wide tall"):
             yield Static("Continue an existing log", classes="dialog-title")
             yield Input(placeholder="…or type a path and press Enter", id="path")
             options = []
@@ -277,7 +325,7 @@ class CopyDestScreen(ModalScreen):
                 break
 
     def compose(self) -> ComposeResult:
-        with Vertical(classes="dialog wide"):
+        with Vertical(classes="dialog wide tall"):
             yield Static("Copy destination", classes="dialog-title")
             yield Static(
                 "At session end the log is copied to <dest>/<YYMMDD>/<file>.md",
@@ -317,22 +365,16 @@ class NoteModal(ModalScreen):
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
 
     def compose(self) -> ComposeResult:
-        with Vertical(classes="dialog wide"):
-            yield Static("Note", classes="dialog-title")
-            yield Static("Arrow keys, backspace and paste all work here.", classes="hint")
-            yield TextArea(id="note")
-            with Horizontal(classes="buttons"):
-                yield Button("Save", variant="primary", id="save")
-                yield Button("Cancel", id="cancel")
+        with Vertical(classes="dialog narrow"):
+            yield Static("note", classes="dialog-title")
+            yield Input(id="note")
+            yield Static("enter save · esc cancel", classes="hint")
 
     def on_mount(self) -> None:
-        self.query_one("#note", TextArea).focus()
+        self.query_one("#note", Input).focus()
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "save":
-            self.dismiss(self.query_one("#note", TextArea).text)
-        else:
-            self.dismiss(None)
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        self.dismiss(event.value)
 
     def action_cancel(self) -> None:
         self.dismiss(None)
@@ -459,7 +501,7 @@ class EditMetadataModal(ModalScreen):
         self._fields = logger.get_session_fields()
 
     def compose(self) -> ComposeResult:
-        with Vertical(classes="dialog wide"):
+        with Vertical(classes="dialog wide tall"):
             yield Static("Edit session details", classes="dialog-title")
             with VerticalScroll(classes="form"):
                 for field in self._fields:
@@ -827,6 +869,8 @@ class LabLogApp(App):
         self.logging_screen = LoggingScreen(logger)
 
     def on_mount(self) -> None:
+        self.register_theme(ROSE_PINE)
+        self.theme = "rose-pine"
         self.push_screen(self.logging_screen)
         self.run_startup()
 

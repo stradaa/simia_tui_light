@@ -1,75 +1,87 @@
-/* SIMIA Lab Log — Textual theme */
+/* SIMIA Lab Log — minimal Rose Pine theme.
+   Colors come from the registered `rose-pine` theme; this file only does
+   layout + restraint. Everything sizes in %/fr so it survives tiny terminals. */
 
 Screen {
-    background: $surface;
+    background: $background;
 }
+
+/* ---- main logging screen ---- */
 
 #statusbar {
     dock: top;
     height: 1;
-    padding: 0 2;
-    background: $panel;
+    padding: 0 1;
     color: $text;
 }
 
 #hintbar {
     dock: bottom;
-    height: 2;
-    padding: 0 2;
-    background: $panel-darken-1;
+    height: auto;
+    padding: 0 1;
     color: $text-muted;
 }
 
 #log {
-    padding: 0 2;
-    background: $surface;
+    padding: 0 1;
     scrollbar-size-vertical: 1;
 }
 
-/* ----- modal dialogs ----- */
+/* ---- modal dialogs ---- */
 
 ModalScreen {
     align: center middle;
 }
 
 .dialog {
-    width: 60;
-    max-width: 90%;
+    width: 90%;
+    max-width: 56;
     height: auto;
     max-height: 90%;
-    padding: 1 2;
+    padding: 0 1;
     border: round $primary;
-    background: $panel;
+    background: $surface;
 }
 
 .dialog.wide {
-    width: 80;
+    max-width: 72;
+}
+
+.dialog.narrow {
+    max-width: 44;
+}
+
+/* Tall dialogs (forms / lists / start): a scrolling body keeps the buttons
+   pinned and visible even when the terminal is short. */
+.dialog.tall {
+    height: 90%;
+}
+
+.body,
+.form {
+    height: 1fr;
+}
+
+.dialog.tall OptionList {
+    height: 1fr;
 }
 
 .dialog-title {
     text-style: bold;
     color: $primary;
-    padding-bottom: 1;
 }
 
 .banner {
-    color: $accent;
-    padding-bottom: 1;
+    color: $secondary;
 }
 
 .hint {
     color: $text-muted;
-    padding-bottom: 1;
 }
 
 .field-label {
     color: $text-muted;
     padding-top: 1;
-}
-
-.form {
-    height: auto;
-    max-height: 20;
 }
 
 .help-body {
@@ -78,16 +90,16 @@ ModalScreen {
 
 .buttons {
     height: auto;
-    padding-top: 1;
     align-horizontal: right;
 }
 
 .buttons Button {
-    margin-left: 2;
+    margin-left: 1;
 }
 
 OptionList {
     height: auto;
-    max-height: 16;
-    border: round $primary-darken-2;
+    max-height: 14;
+    border: none;
+    background: $surface;
 }
