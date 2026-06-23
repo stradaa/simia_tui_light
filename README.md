@@ -1,6 +1,26 @@
 # simia_tui_light
 
-A minimal TUI for fast, timestamped experiment logging with customizable macro hotkeys.
+A fast, pretty TUI for timestamped experiment logging with customizable macro
+hotkeys. The interface is a full-screen [Textual](https://textual.textualize.io/)
+app: a slim status bar, a scrolling color-coded event pane (each entry is printed
+exactly once — no more double-printed notes), and modal dialogs for every text
+entry so arrow keys, backspace, and multi-line paste all work correctly.
+
+## Install
+
+```bash
+pip install -r requirements.txt
+```
+
+Then run:
+
+```bash
+python lablog.py
+```
+
+On launch you choose **New session** or **Continue existing log**.
+
+## Keys (live session)
 
 Default macro keys:
 - `1` = START RECORDING
@@ -9,15 +29,29 @@ Default macro keys:
 - `4` = STOP TASK
 
 Other keys:
-- `n` = note
-- `l` = liquid
-- `m` = mark
-- `u` = undo
+- `n` = note (opens a multi-line editor — full arrow/backspace/paste editing)
+- `l` = liquid (log an event, or set the header total)
+- `m` = mark / section break
+- `u` = undo last entry (this session)
+- `c` = correct the current recording number (after a misclick)
+- `/` = edit session details (all header fields in one form)
 - `r` = reload config
-- `p` = print full current session (header + all events)
-- `/` = session metadata commands (`/fields`, `/edit`)
+- `p` = jump to newest / re-render the pane
 - `h` = help
-- `q` = stop
+- `q` = end session (asks to confirm, then copies the log)
+
+## Continue an existing log
+
+Choose **Continue existing log** at startup to resume appending to a previous
+`.md` file instead of starting fresh. Pick a recent log from the list (or type a
+path). Resuming restores the header fields, the recording counter (so the next
+START continues from the right number), and the active task. Note: `undo` after
+resuming only affects entries added in the resumed session.
+
+## Correct the recording number
+
+If you mis-click START/STOP and the recording counter drifts, press `c` and type
+the correct number. The next START RECORDING continues from there.
 
 ## Export print-ready packets
 Use export mode to scan saved session logs and generate a condensed HTML packet for printing.
@@ -59,19 +93,16 @@ The generated HTML is print-optimized:
 
 Open the generated `.html` file in your browser and print it directly or print to PDF.
 
-## Startup flow improvements
-- Professional ASCII welcome banner on launch.
-- Session fields can be selectively filled at startup per session (for example, `1,2` to fill only behaviorist and monkey).
-- During session setup:
-  - `/back` goes to previous field
-  - `/skip` leaves current field blank
-  - Press `Enter` at the selection prompt to fill all fields
-  - Unselected fields stay blank and can be updated later with `/edit`
-  - If configured, `Behaviorist(s)`, `Simia (monkey)`, and `Project` show numbered choices and optional defaults
-  - Press `Enter` on one of those fields to use its configured default value
+## Startup flow
+- ASCII welcome banner on the start screen with **New session** / **Continue existing log**.
+- The new-session form pre-fills configured defaults; fields with configured
+  `field_options` (`Behaviorist(s)`, `Simia (monkey)`, `Project`) show a dropdown,
+  the rest are free text. Adjust what you need and start.
 - During live logging:
-  - Press `/` then run `/edit Weight` (or `/edit 3`) to update metadata header fields mid-session.
-  - Press `l` then choose `2` to set `Total liquid consumed (mL)` in the header at session end.
+  - Press `/` to edit any header field in a single form (replaces the old
+    `/edit Weight` flow).
+  - Press `l` and choose **Set final total consumed** to update
+    `Total liquid consumed (mL)` in the header.
 
 ## User config (`lablog_config.json`)
 If `lablog_config.json` is missing or invalid, `lablog.py` now prompts for a minimal user-specific config and writes it automatically.

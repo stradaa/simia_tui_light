@@ -3,17 +3,9 @@ import argparse
 import json
 import os
 import shutil
-import sys
 from datetime import datetime
 from html import escape
 from pathlib import Path
-
-try:
-    from ascii_art import MONKEY_FACES, HEADER, STATE_LABELS
-except ImportError:
-    MONKEY_FACES = {}
-    HEADER = ""
-    STATE_LABELS = {}
 
 DEFAULT_CONFIG = {
     "output_dir": "logs",
@@ -628,45 +620,6 @@ def export_logs(config):
     return 0
 
 
-class RawInput:
-    def __init__(self):
-        self._old = None
-
-    def __enter__(self):
-        if IS_WINDOWS:
-            return self
-        import termios
-        import tty
-
-        self._old = termios.tcgetattr(sys.stdin.fileno())
-        tty.setraw(sys.stdin.fileno())
-        return self
-
-    def __exit__(self, exc_type, exc, tb):
-        if IS_WINDOWS:
-            return False
-        import termios
-
-        if self._old:
-            termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, self._old)
-        return False
-
-    def getch(self):
-        if IS_WINDOWS:
-            import msvcrt
-
-            ch = msvcrt.getch()
-            if ch in (b"\x00", b"\xe0"):
-                ch = msvcrt.getch()  # skip special keys
-            try:
-                return ch.decode("utf-8", errors="ignore")
-            except Exception:
-                return ""
-        else:
-            ch = sys.stdin.read(1)
-            return ch
-
-
 class Logger:
     def __init__(self, config_path: Path):
         self.config_path = config_path
@@ -699,35 +652,6 @@ class Logger:
         out_dir.mkdir(parents=True, exist_ok=True)
         return out_dir
 
-    def start_session(self):
-        date_str = datetime.now().strftime("%Y-%m-%d")
-        file_date = datetime.now().strftime("%y%m%d")
-        self.print_welcome()
-        self.session_data = self.prompt_session_data()
-        behaviorists = self.session_data.get("behaviorists", "")
-        animal_id = self.session_data.get("animal_id", "")
-
-        self.session_date = date_str
-        self.session_started_at = self.tshort()
-
-        out_dir = self.ensure_output_dir()
-
-        # 🔹 Filename is now based on SIMIA, not behaviorist
-        animal_part = self.sanitize(animal_id) if animal_id else "animal"
-        filename = f"{file_date}_{animal_part}.md"
-
-        base_path = out_dir / filename
-        self.file_path = self.next_available_path(base_path)
-
-        header = self.build_header()
-
-        self.entries = header.copy()
-        self.write_all()
-        self.session_started = True
-
-        print(f"Session file: {self.file_path}")
-        self.prompt_copy_destination(animal_id)
-
     def build_header(self):
         fields = self.get_session_fields()
         lines = [
@@ -751,26 +675,6 @@ class Logger:
         self.entries = self.build_header() + events
         self.write_all()
 
-    def print_box(self, title: str, lines):
-        body = [str(line) for line in lines]
-        width = max([len(title)] + [len(line) for line in body]) + 2
-        border = "+" + ("-" * (width + 2)) + "+"
-        self.print_left(border)
-        self.print_left(f"| {title.ljust(width)} |")
-        self.print_left(border)
-        for line in body:
-            self.print_left(f"| {line.ljust(width)} |")
-        self.print_left(border)
-
-    def print_welcome(self):
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        self.print_left("")
-        if HEADER:
-            for line in HEADER.splitlines():
-                self.print_left(line)
-        self.print_left(f"  started: {ts}")
-        self.print_left("")
-
     def get_session_fields(self):
         fields = self.config.get("session_fields", DEFAULT_CONFIG["session_fields"])
         if not isinstance(fields, list):
@@ -792,36 +696,6 @@ class Logger:
             if field["id"] not in existing_ids:
                 normalized.append(field)
         return normalized
-
-    def choose_startup_fields(self, fields):
-        self.print_box(
-            "Session Setup",
-            [
-                "Choose which fields to fill out now.",
-                "Press Enter to fill all fields.",
-                "Use comma list, e.g. 1,2 to fill only those now.",
-            ],
-        )
-        for i, field in enumerate(fields, start=1):
-            self.print_left(f"  {i}. {field['label']}")
-        self.print_left("Fill now: ")
-        selection_text = input().strip()
-        if not selection_text:
-            return list(range(len(fields)))
-
-        parts = [p.strip() for p in selection_text.split(",") if p.strip()]
-        if any(not p.isdigit() for p in parts):
-            self.print_left("Invalid selection. Filling all fields.")
-            return list(range(len(fields)))
-
-        selected = [int(p) - 1 for p in parts]
-        if len(set(selected)) != len(selected):
-            self.print_left("Invalid selection. Filling all fields.")
-            return list(range(len(fields)))
-        if any(i < 0 or i >= len(fields) for i in selected):
-            self.print_left("Invalid selection. Filling all fields.")
-            return list(range(len(fields)))
-        return selected
 
     def get_field_options(self, field_id: str):
         field_options = self.config.get("field_options", {})
@@ -852,58 +726,6 @@ class Logger:
                 values.append(options[idx - 1])
             return ", ".join(values)
         return raw
-
-    def prompt_animal_field(self, field, options, default_value):
-        face_keys = list(MONKEY_FACES.keys())
-        self.print_left(f"{field['label']}:")
-        self.print_left("")
-        for i, option in enumerate(options):
-            face_key = face_keys[i % len(face_keys)]
-            face_lines = MONKEY_FACES[face_key].split("\n")
-            suffix = " [default]" if option == default_value and default_value else ""
-            self.print_left(f"  {face_lines[0]}   {i + 1}. {option}{suffix}")
-            for line in face_lines[1:]:
-                self.print_left(f"  {line}")
-            self.print_left("")
-        self.print_left("  Enter number, name, /skip, or /back.")
-        if default_value:
-            self.print_left("  Press Enter for default.")
-        value = input().strip()
-        if not value:
-            return default_value if (options or default_value) else ""
-        parsed = self.parse_option_selection(value, options)
-        if parsed is None:
-            self.print_left("Invalid selection.")
-            return None
-        return parsed
-
-    def prompt_field_value(self, field):
-        options = self.get_field_options(field["id"])
-        default_value = self.get_field_default(field["id"])
-
-        if field["id"] == "animal_id" and options and MONKEY_FACES:
-            return self.prompt_animal_field(field, options, default_value)
-
-        self.print_left(f"{field['label']}: ")
-        if options:
-            self.print_left("  Options:")
-            for i, option in enumerate(options, start=1):
-                suffix = " [default]" if option == default_value and default_value else ""
-                self.print_left(f"    {i}. {option}{suffix}")
-            self.print_left("  Enter a number, comma list, custom text, /skip, or /back.")
-            if default_value:
-                self.print_left("  Press Enter to use the default.")
-
-        value = input().strip()
-        if not value:
-            return default_value if options or default_value else ""
-        if options:
-            parsed = self.parse_option_selection(value, options)
-            if parsed is None:
-                self.print_left("Invalid selection.")
-                return None
-            return parsed
-        return value
 
     def get_copy_targets(self):
         targets = self.config.get("copy_on_stop_targets", [])
@@ -975,167 +797,6 @@ class Logger:
             return folder / self.file_path.name
         return folder
 
-    def confirm_non_matching_copy_target(self, target, animal_id):
-        if not animal_id or self.target_matches_monkey(target, animal_id):
-            return True
-        self.print_left("")
-        self.print_left(f"Selected destination does not contain Simia name '{animal_id}'.")
-        self.print_left(f"Destination: {target['path']}")
-        self.print_left("Use this destination anyway? [y/N]: ")
-        choice = input().strip().lower()
-        return choice in ("y", "yes")
-
-    def prompt_custom_copy_target(self, animal_id):
-        self.print_left("Custom copy parent directory, or /skip: ")
-        raw = input().strip()
-        if not raw or raw.lower() == "/skip":
-            return None
-        target = {"label": Path(raw).name or raw, "path": raw}
-        if not self.confirm_non_matching_copy_target(target, animal_id):
-            self.print_left("Copy skipped.")
-            return None
-        return target
-
-    def prompt_copy_destination(self, animal_id):
-        targets = self.get_copy_targets()
-        matching_targets = [target for target in targets if self.target_matches_monkey(target, animal_id)]
-        default_target = matching_targets[0] if matching_targets else None
-        inferred_target = None
-        if default_target is None:
-            inferred_target = self.infer_copy_target_for_monkey(targets, animal_id)
-            if inferred_target:
-                default_target = inferred_target
-                targets = [inferred_target] + targets
-
-        self.print_left("")
-        self.print_box(
-            "Copy Destination",
-            [
-                "Choose where the final Markdown log should be copied.",
-                "The default is a configured folder containing the Simia name.",
-            ],
-        )
-
-        if targets:
-            for i, target in enumerate(targets, start=1):
-                suffix = " [default]" if target == default_target else ""
-                self.print_left(f"  {i}. {target['label']}{suffix}")
-                self.print_left(f"     {target['path']}")
-        else:
-            self.print_left("No copy destinations are configured.")
-
-        if default_target:
-            self.print_left("")
-            self.print_left("At session end, this log will be copied to:")
-            self.print_left(f"  {self.build_copy_preview_path(default_target['path'])}")
-            if inferred_target:
-                self.print_left("Inferred from the configured behavior folder pattern.")
-            self.print_left("Press Enter to use this destination, choose a number, type a custom path, or /skip.")
-        else:
-            self.print_left("")
-            if animal_id:
-                self.print_left(f"No configured copy destination contains Simia name '{animal_id}'.")
-            self.print_left("Choose a number, type a custom path, or /skip.")
-
-        while True:
-            self.print_left("Copy destination: ")
-            raw = input().strip()
-            if not raw:
-                selected = default_target
-            elif raw.lower() == "/skip":
-                selected = None
-            elif raw.lower() in ("change", "custom"):
-                selected = self.prompt_custom_copy_target(animal_id)
-            elif raw.isdigit() and targets:
-                idx = int(raw)
-                if 1 <= idx <= len(targets):
-                    selected = targets[idx - 1]
-                else:
-                    self.print_left("Invalid selection.")
-                    continue
-            else:
-                selected = {"label": Path(raw).name or raw, "path": raw}
-
-            if selected is None:
-                self.copy_target_root = None
-                self.print_left("External copy disabled for this session.")
-                return
-
-            if not self.confirm_non_matching_copy_target(selected, animal_id):
-                continue
-
-            self.copy_target_root = selected["path"]
-            self.print_left("Selected copy destination:")
-            self.print_left(f"  {self.build_copy_preview_path(self.copy_target_root)}")
-            return
-
-    def copy_log_to_external_dir(self):
-        if not self.file_path:
-            return
-
-        copy_root_raw = str(self.copy_target_root or "").strip()
-        if not copy_root_raw:
-            return
-
-        copy_root = Path(copy_root_raw).expanduser()
-        session_folder = copy_root / self.session_folder_name()
-
-        if not session_folder.is_dir():
-            self.print_left(f"Copy target not found: {session_folder}")
-            self.print_left("Create this folder now? [y/N]: ")
-            choice = input().strip().lower()
-            if choice not in ("y", "yes"):
-                self.print_left("Copy skipped.")
-                return
-            try:
-                session_folder.mkdir(parents=True, exist_ok=True)
-            except Exception as exc:
-                self.print_left(f"Could not create folder: {exc}")
-                return
-
-        target_path = session_folder / self.file_path.name
-        try:
-            shutil.copy2(self.file_path, target_path)
-        except Exception as exc:
-            self.print_left(f"Copy failed: {exc}")
-            return
-
-        self.print_left(f"Copied log to {target_path}")
-
-    def prompt_session_data(self):
-        fields = self.get_session_fields()
-        selected = self.choose_startup_fields(fields)
-        data = {}
-        startup_fields = [fields[i] for i in selected]
-
-        self.print_box(
-            "Entry Controls",
-            [
-                "Type /back to edit previous field",
-                "Type /skip to leave a field blank",
-                "Unselected fields stay blank for later /edit",
-            ],
-        )
-
-        i = 0
-        while i < len(startup_fields):
-            field = startup_fields[i]
-            value = self.prompt_field_value(field)
-            if value is None:
-                continue
-            if value.lower() == "/back":
-                if i > 0:
-                    i -= 1
-                else:
-                    self.print_left("Already at first field.")
-                continue
-            if value.lower() == "/skip":
-                value = ""
-            data[field["id"]] = value
-            i += 1
-
-        return data
-
     def normalize_token(self, text: str):
         return "".join(ch.lower() for ch in text if ch.isalnum())
 
@@ -1156,94 +817,18 @@ class Logger:
                 return field
         return None
 
-    def show_session_fields(self):
-        self.print_box("Session Fields", ["Editable session metadata"])
-        fields = self.get_session_fields()
-        for i, field in enumerate(fields, start=1):
-            value = self.session_data.get(field["id"], "")
-            self.print_left(f"  {i}. {field['label']}: {value or 'N/A'}")
-
-    def edit_session_field(self, token: str):
-        field = self.resolve_field(token)
-        if not field:
-            self.print_left(f"Unknown field: {token}")
-            self.show_session_fields()
-            return
-        current = self.session_data.get(field["id"], "")
-        self.print_left(f"Editing {field['label']} (current: {current or 'N/A'}).")
-        new_value = self.prompt_field_value(field)
-        if new_value is None:
-            return
-        if new_value.lower() == "/skip":
-            new_value = ""
-        self.session_data[field["id"]] = new_value
-        self.rebuild_header()
-        self.print_left(f"Updated {field['label']}.")
-
-    def prompt_slash_command(self):
-        self.print_left("")
-        self.print_box(
-            "Slash Commands",
-            [
-                "/fields                show session fields",
-                "/edit <name|index>     edit one field",
-                "/help                  show commands",
-            ],
-        )
-        self.print_left("Slash command: ")
-        raw = input().strip()
-        if not raw:
-            return
-        cmd = raw[1:] if raw.startswith("/") else raw
-        parts = cmd.split(maxsplit=1)
-        action = parts[0].lower()
-        arg = parts[1] if len(parts) > 1 else ""
-
-        if action in ("help", "?"):
-            return
-        if action in ("fields", "show"):
-            self.show_session_fields()
-            return
-        if action in ("edit", "set"):
-            if not arg:
-                self.show_session_fields()
-                self.print_left("Field to edit: ")
-                arg = input().strip()
-            if arg:
-                self.edit_session_field(arg)
-            return
-        self.print_left(f"Unknown slash command: {raw}")
-
     def write_all(self):
         if not self.file_path:
             return
         with self.file_path.open("w", encoding="utf-8") as f:
             f.write("\n".join(self.entries) + "\n")
 
-    def print_state_label(self, text: str):
-        if not STATE_LABELS:
-            return
-        upper = text.strip().upper()
-        if upper == "START RECORDING":
-            label = STATE_LABELS.get("rec_start")
-        elif upper == "STOP RECORDING":
-            label = STATE_LABELS.get("rec_stop")
-        elif upper.startswith("LIQUID"):
-            label = STATE_LABELS.get("liquid")
-        else:
-            return
-        if label:
-            self.print_left(label)
-
     def append_entry(self, text: str):
         lines = self.render_entry_lines(text)
         self.entries.extend(lines)
         self.event_line_counts.append(len(lines))
         self.write_all()
-        for line in lines:
-            sys.stdout.write("\r" + line + "\n")
-            sys.stdout.flush()
-        self.print_state_label(text)
+        return lines
 
     def render_entry_lines(self, text: str):
         ts = self.tshort()
@@ -1270,14 +855,13 @@ class Logger:
         return lines
 
     def mark(self):
-        self.append_entry("---")
+        return self.append_entry("---")
 
-    def note(self):
-        self.clear_line()
-        print("Note: ", end="", flush=True)
-        note = input().strip()
-        if note:
-            self.append_entry(note)
+    def note(self, text: str):
+        text = (text or "").strip()
+        if text:
+            return self.append_entry(text)
+        return []
 
     def undo(self):
         if self.event_line_counts:
@@ -1285,111 +869,17 @@ class Logger:
             removed = self.entries[-count:]
             del self.entries[-count:]
             self.write_all()
-            print(f"Undone: {' | '.join(removed)}")
-            return
-        print("Nothing to undo.")
+            return removed
+        return None
 
     def stop(self):
-        self.append_entry("SESSION END")
-        self.copy_log_to_external_dir()
+        lines = self.append_entry("SESSION END")
         self.session_started = False
+        return lines
 
     def reload_config(self):
         self.config, self.config_loaded = load_config(self.config_path)
 
-    def print_menu(self):
-        macros = self.config.get("macros", [])
-        self.print_left("")
-        self.print_box(
-            "Live Commands",
-            [
-                "Main logging keys",
-                "Press h any time to reprint this menu",
-            ],
-        )
-        for m in macros:
-            key = m.get("key", "?")
-            label = m.get("label", m.get("text", ""))
-            self.print_left(f"  [{key}] {label}")
-        self.print_left("  [n] note    [l] liquid    [m] mark")
-        self.print_left("  [u] undo    [r] reload    [p] print current log")
-        self.print_left("  [/] edit session metadata")
-        self.print_left("  [h] help    [q] stop")
-        self.print_left("Press a key...")
-
-    def print_entries_snapshot(self):
-        self.print_left("")
-        self.print_box(
-            "Current Session",
-            [
-                "Reprint of current header and events",
-                f"File: {self.file_path}" if self.file_path else "File: N/A",
-            ],
-        )
-        for line in self.entries:
-            self.print_left(line)
-        self.print_left("")
-
-    def clear_line(self):
-        if sys.stdout.isatty():
-            # ANSI erase-in-line avoids wrapped whitespace when the terminal is narrow.
-            sys.stdout.write("\r\x1b[2K")
-        else:
-            width = max(shutil.get_terminal_size(fallback=(80, 24)).columns - 1, 1)
-            sys.stdout.write("\r" + (" " * width) + "\r")
-        sys.stdout.flush()
-
-    def print_left(self, text: str):
-        self.clear_line()
-        sys.stdout.write(text + "\n")
-        sys.stdout.flush()
-
-    def prompt_task(self):
-        tasks = self.config.get("tasks", [])
-        if tasks:
-            self.print_left("Select task or type a custom name:")
-            for i, t in enumerate(tasks, start=1):
-                self.print_left(f"  {i} = {t}")
-        self.print_left("Task: ")
-        choice = input().strip()
-        if choice.isdigit():
-            idx = int(choice)
-            if 1 <= idx <= len(tasks):
-                return tasks[idx - 1]
-        return choice
-
-    def prompt_trials(self):
-        self.print_left("Trials (successful/failed), e.g. 12/3: ")
-        return input().strip()
-
-    def prompt_liquid(self):
-        self.print_left("Liquid options:")
-        self.print_left("  1 = log liquid event")
-        self.print_left("  2 = set final total consumed (header)")
-        self.print_left("Choice [1/2]: ")
-        choice = input().strip()
-        if choice == "2":
-            self.print_left("Total liquid consumed (mL): ")
-            total_ml = input().strip()
-            return {"mode": "set_total", "total_ml": total_ml}
-
-        self.print_left("Liquid amount (mL): ")
-        amount = input().strip()
-        self.print_left("Liquid type (select or type custom):")
-        self.print_left("  1 = water")
-        self.print_left("  2 = diluted juice")
-        self.print_left("Type: ")
-        liquid_type = input().strip()
-        if liquid_type == "1":
-            liquid_type = "water"
-        elif liquid_type == "2":
-            liquid_type = "diluted juice"
-        if amount and liquid_type:
-            return {"mode": "event", "entry": f"LIQUID: {amount} mL ({liquid_type})"}
-        if amount:
-            return {"mode": "event", "entry": f"LIQUID: {amount} mL"}
-        return {"mode": "event", "entry": "LIQUID"}
-    
     def next_available_path(self, path: Path) -> Path:
         """
         If path exists, append _01, _02, ... before the suffix.
@@ -1407,6 +897,121 @@ class Logger:
             if not candidate.exists():
                 return candidate
             i += 1
+
+    # --- UI-free session lifecycle (driven by the Textual app) ---
+
+    def begin_new_session(self, session_data, copy_target_root):
+        self.session_data = dict(session_data or {})
+        self.session_date = datetime.now().strftime("%Y-%m-%d")
+        self.session_started_at = self.tshort()
+        self.copy_target_root = copy_target_root or None
+        self.recording_index = 0
+        self.current_task = None
+        self.event_line_counts = []
+
+        animal_id = self.session_data.get("animal_id", "")
+        animal_part = self.sanitize(animal_id) if animal_id else "animal"
+        file_date = datetime.now().strftime("%y%m%d")
+        out_dir = self.ensure_output_dir()
+        base_path = out_dir / f"{file_date}_{animal_part}.md"
+        self.file_path = self.next_available_path(base_path)
+
+        self.entries = self.build_header()
+        self.write_all()
+        self.session_started = True
+        return self.file_path
+
+    def resume_session(self, path: Path, copy_target_root):
+        import re
+
+        session = parse_log_file(path)
+        if session is None:
+            return None
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except Exception:
+            return None
+
+        self.file_path = path
+        self.entries = [line.rstrip("\r\n") for line in lines]
+        self.copy_target_root = copy_target_root or None
+        self.event_line_counts = []
+
+        header = session["header"]
+        data = {}
+        for field in self.get_session_fields():
+            value = header.get(field["label"], "")
+            if value and value != "N/A":
+                data[field["id"]] = value
+        self.session_data = data
+
+        self.session_date = header.get("Date", "") or datetime.now().strftime("%Y-%m-%d")
+        self.session_started_at = session.get("started", "") or self.tshort()
+
+        max_rec = 0
+        for event in session["events"]:
+            match = re.search(r"REC (\d+) START", event)
+            if match:
+                max_rec = max(max_rec, int(match.group(1)))
+        self.recording_index = max_rec
+
+        start_idx = stop_idx = -1
+        task_name = None
+        for i, event in enumerate(session["events"]):
+            if "START TASK:" in event:
+                start_idx = i
+                task_name = event.split("START TASK:", 1)[1].strip()
+            if "STOP TASK:" in event:
+                stop_idx = i
+        self.current_task = task_name if start_idx > stop_idx else None
+
+        self.session_started = True
+        return session
+
+    def set_recording_index(self, n: int):
+        self.recording_index = max(0, int(n))
+
+    def set_field(self, field_id: str, value: str):
+        self.session_data[field_id] = value
+        self.rebuild_header()
+
+    def set_total_liquid(self, value: str):
+        self.session_data["total_liquid_ml"] = value
+        self.rebuild_header()
+
+    def event_section_lines(self):
+        if "## Events" in self.entries:
+            idx = self.entries.index("## Events")
+            return self.entries[idx + 1 :]
+        return []
+
+    # --- UI-free external copy ---
+
+    def external_copy_folder(self):
+        root = str(self.copy_target_root or "").strip()
+        if not root:
+            return None
+        return Path(root).expanduser() / self.session_folder_name()
+
+    def do_external_copy(self, create_missing: bool = False):
+        if not self.file_path:
+            return {"status": "skipped", "message": "No session file."}
+        folder = self.external_copy_folder()
+        if folder is None:
+            return {"status": "skipped", "message": "External copy disabled for this session."}
+        if not folder.is_dir():
+            if not create_missing:
+                return {"status": "missing_folder", "message": str(folder), "folder": str(folder)}
+            try:
+                folder.mkdir(parents=True, exist_ok=True)
+            except Exception as exc:
+                return {"status": "error", "message": f"Could not create folder: {exc}"}
+        target_path = folder / self.file_path.name
+        try:
+            shutil.copy2(self.file_path, target_path)
+        except Exception as exc:
+            return {"status": "error", "message": f"Copy failed: {exc}"}
+        return {"status": "copied", "message": str(target_path)}
 
 
 def main():
@@ -1428,133 +1033,10 @@ def main():
     if args.export:
         return export_logs(logger.config)
 
-    logger.start_session()
-    logger.print_menu()
+    from tui import run_app
 
-    with RawInput() as inp:
-        while logger.session_started:
-            ch = inp.getch()
-            if not ch:
-                continue
-            key = ch.strip()
-            if not key:
-                continue
-
-            if key == logger.config.get("help_key", "h"):
-                logger.print_menu()
-                continue
-            if key == logger.config.get("note_key", "n"):
-                # leave raw mode for input
-                if not IS_WINDOWS:
-                    import termios
-
-                    termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, inp._old)
-                logger.note()
-                if not IS_WINDOWS:
-                    import tty
-
-                    tty.setraw(sys.stdin.fileno())
-                continue
-            if key == logger.config.get("liquid_key", "l"):
-                if not IS_WINDOWS:
-                    import termios
-
-                    termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, inp._old)
-                result = logger.prompt_liquid()
-                if result.get("mode") == "set_total":
-                    total_ml = result.get("total_ml", "").strip()
-                    logger.session_data["total_liquid_ml"] = total_ml
-                    logger.rebuild_header()
-                    print("Updated header: Total liquid consumed (mL).")
-                else:
-                    entry = result.get("entry", "")
-                    if entry:
-                        logger.append_entry(entry)
-                if not IS_WINDOWS:
-                    import tty
-
-                    tty.setraw(sys.stdin.fileno())
-                continue
-            if key == logger.config.get("mark_key", "m"):
-                logger.mark()
-                continue
-            if key == logger.config.get("undo_key", "u"):
-                logger.undo()
-                continue
-            if key == logger.config.get("reload_key", "r"):
-                logger.reload_config()
-                print("Config reloaded.")
-                logger.print_menu()
-                continue
-            if key == logger.config.get("print_key", "p"):
-                logger.print_entries_snapshot()
-                continue
-            if key == "/":
-                if not IS_WINDOWS:
-                    import termios
-
-                    termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, inp._old)
-                logger.prompt_slash_command()
-                if not IS_WINDOWS:
-                    import tty
-
-                    tty.setraw(sys.stdin.fileno())
-                continue
-            if key == logger.config.get("stop_key", "q"):
-                if not IS_WINDOWS:
-                    import termios
-
-                    termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, inp._old)
-                logger.stop()
-                print("Session ended.")
-                break
-
-            matched = False
-            for m in logger.config.get("macros", []):
-                if key == str(m.get("key", "")):
-                    text = m.get("text") or m.get("label") or ""
-                    upper = text.strip().upper()
-                    if upper == "START TASK":
-                        if not IS_WINDOWS:
-                            import termios
-
-                            termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, inp._old)
-                        task = logger.prompt_task()
-                        if task:
-                            logger.current_task = task
-                            logger.append_entry(f"START TASK: {task}")
-                        if not IS_WINDOWS:
-                            import tty
-
-                            tty.setraw(sys.stdin.fileno())
-                    elif upper == "STOP TASK":
-                        if not IS_WINDOWS:
-                            import termios
-
-                            termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, inp._old)
-                        trials = logger.prompt_trials()
-                        task_label = logger.current_task or "UNKNOWN"
-                        if trials:
-                            logger.append_entry(f"STOP TASK: {task_label} [{trials}]")
-                        else:
-                            logger.append_entry(f"STOP TASK: {task_label}")
-                        if not IS_WINDOWS:
-                            import tty
-
-                            tty.setraw(sys.stdin.fileno())
-                    elif text:
-                        logger.append_entry(text)
-                    matched = True
-                    break
-
-            if not matched:
-                print(f"Unknown key: {key}")
-
-    return 0
+    return run_app(logger)
 
 
 if __name__ == "__main__":
-    try:
-        raise SystemExit(main())
-    except KeyboardInterrupt:
-        print("\nInterrupted. If you want to stop cleanly, press q next time.")
+    raise SystemExit(main())

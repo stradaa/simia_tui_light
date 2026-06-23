@@ -1,0 +1,93 @@
+/* SIMIA Lab Log — Textual theme */
+
+Screen {
+    background: $surface;
+}
+
+#statusbar {
+    dock: top;
+    height: 1;
+    padding: 0 2;
+    background: $panel;
+    color: $text;
+}
+
+#hintbar {
+    dock: bottom;
+    height: 2;
+    padding: 0 2;
+    background: $panel-darken-1;
+    color: $text-muted;
+}
+
+#log {
+    padding: 0 2;
+    background: $surface;
+    scrollbar-size-vertical: 1;
+}
+
+/* ----- modal dialogs ----- */
+
+ModalScreen {
+    align: center middle;
+}
+
+.dialog {
+    width: 60;
+    max-width: 90%;
+    height: auto;
+    max-height: 90%;
+    padding: 1 2;
+    border: round $primary;
+    background: $panel;
+}
+
+.dialog.wide {
+    width: 80;
+}
+
+.dialog-title {
+    text-style: bold;
+    color: $primary;
+    padding-bottom: 1;
+}
+
+.banner {
+    color: $accent;
+    padding-bottom: 1;
+}
+
+.hint {
+    color: $text-muted;
+    padding-bottom: 1;
+}
+
+.field-label {
+    color: $text-muted;
+    padding-top: 1;
+}
+
+.form {
+    height: auto;
+    max-height: 20;
+}
+
+.help-body {
+    height: auto;
+}
+
+.buttons {
+    height: auto;
+    padding-top: 1;
+    align-horizontal: right;
+}
+
+.buttons Button {
+    margin-left: 2;
+}
+
+OptionList {
+    height: auto;
+    max-height: 16;
+    border: round $primary-darken-2;
+}
