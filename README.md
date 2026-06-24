@@ -30,8 +30,8 @@ Default macro keys:
 - `4` = STOP TASK
 
 Other keys:
-- `n` = note (compact one-line prompt; Enter saves, Esc cancels)
-- `l` = liquid (log an event, or set the header total)
+- `n` = note (inline prompt at the bottom; the event log stays visible above it — Enter saves, Esc cancels)
+- `l` = juice — type the mL and press Enter (defaults to diluted juice; add ` w`, e.g. `30 w`, for water)
 - `m` = mark / section break
 - `u` = undo last entry (this session)
 - `c` = correct the current recording number (after a misclick)
@@ -101,9 +101,10 @@ Open the generated `.html` file in your browser and print it directly or print t
   the rest are free text. Adjust what you need and start.
 - During live logging:
   - Press `/` to edit any header field in a single form (replaces the old
-    `/edit Weight` flow).
-  - Press `l` and choose **Set final total consumed** to update
-    `Total liquid consumed (mL)` in the header.
+    `/edit Weight` flow). The running `Total liquid consumed (mL)` is one of
+    those fields, so set it here.
+  - Note and juice entry happen inline at the bottom of the screen, so the
+    event log stays visible while you type.
 
 ## User config (`lablog_config.json`)
 If `lablog_config.json` is missing or invalid, `lablog.py` now prompts for a minimal user-specific config and writes it automatically.

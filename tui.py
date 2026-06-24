@@ -361,67 +361,6 @@ class CopyDestScreen(ModalScreen):
 # Live-session modals
 # --------------------------------------------------------------------------- #
 
-class NoteModal(ModalScreen):
-    BINDINGS = [Binding("escape", "cancel", "Cancel")]
-
-    def compose(self) -> ComposeResult:
-        with Vertical(classes="dialog narrow"):
-            yield Static("note", classes="dialog-title")
-            yield Input(id="note")
-            yield Static("enter save · esc cancel", classes="hint")
-
-    def on_mount(self) -> None:
-        self.query_one("#note", Input).focus()
-
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        self.dismiss(event.value)
-
-    def action_cancel(self) -> None:
-        self.dismiss(None)
-
-
-class LiquidModal(ModalScreen):
-    BINDINGS = [Binding("escape", "cancel", "Cancel")]
-
-    def compose(self) -> ComposeResult:
-        with Vertical(classes="dialog wide"):
-            yield Static("Liquid", classes="dialog-title")
-            with RadioSet(id="mode"):
-                yield RadioButton("Log a liquid event", value=True)
-                yield RadioButton("Set final total consumed (header)")
-            yield Label("Event amount (mL)")
-            yield Input(placeholder="e.g. 1.5", id="amount")
-            yield Label("Liquid type")
-            yield Input(value="water", id="ltype")
-            yield Label("Final total consumed (mL) — for the second option")
-            yield Input(placeholder="e.g. 42", id="total")
-            with Horizontal(classes="buttons"):
-                yield Button("Save", variant="primary", id="save")
-                yield Button("Cancel", id="cancel")
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id != "save":
-            self.dismiss(None)
-            return
-        mode_index = self.query_one("#mode", RadioSet).pressed_index
-        if mode_index == 1:
-            total = self.query_one("#total", Input).value.strip()
-            self.dismiss({"mode": "set_total", "total_ml": total})
-            return
-        amount = self.query_one("#amount", Input).value.strip()
-        ltype = self.query_one("#ltype", Input).value.strip()
-        if amount and ltype:
-            entry = f"LIQUID: {amount} mL ({ltype})"
-        elif amount:
-            entry = f"LIQUID: {amount} mL"
-        else:
-            entry = "LIQUID"
-        self.dismiss({"mode": "event", "entry": entry})
-
-    def action_cancel(self) -> None:
-        self.dismiss(None)
-
-
 class TaskStartModal(ModalScreen):
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
 
@@ -603,15 +542,22 @@ class HelpModal(ModalScreen):
 # --------------------------------------------------------------------------- #
 
 class LoggingScreen(Screen):
+    BINDINGS = [Binding("escape", "cancel_inline", "Cancel", show=False)]
+
     def __init__(self, logger):
         super().__init__()
         self.logger = logger
+        self.input_active = False
+        self.cmd_mode = None
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         yield Static("", id="statusbar")
         yield RichLog(markup=True, wrap=True, id="log")
         yield Static("", id="hintbar")
+        with Horizontal(id="cmdbar", classes="hidden"):
+            yield Static("", id="cmdprompt")
+            yield Input(id="cmdline")
 
     # -- population / refresh ------------------------------------------------ #
 
@@ -645,7 +591,7 @@ class LoggingScreen(Screen):
         )
         keys = (
             f"[b]{cfg.get('note_key', 'n')}[/] note  "
-            f"[b]{cfg.get('liquid_key', 'l')}[/] liquid  "
+            f"[b]{cfg.get('liquid_key', 'l')}[/] juice  "
             f"[b]{cfg.get('mark_key', 'm')}[/] mark  "
             f"[b]{cfg.get('undo_key', 'u')}[/] undo  "
             f"[b]c[/] set-rec  "
@@ -674,7 +620,7 @@ class LoggingScreen(Screen):
 
     def on_key(self, event) -> None:
         ch = event.character
-        if ch is None or not self.logger.session_started:
+        if ch is None or not self.logger.session_started or self.input_active:
             return
         if self.handle_char(ch):
             event.stop()
@@ -683,9 +629,9 @@ class LoggingScreen(Screen):
     def handle_char(self, ch: str) -> bool:
         cfg = self.logger.config
         if ch == cfg.get("note_key", "n"):
-            self.action_note()
+            self.open_inline("note")
         elif ch == cfg.get("liquid_key", "l"):
-            self.action_liquid()
+            self.open_inline("liquid")
         elif ch == cfg.get("mark_key", "m"):
             self.write_lines(self.logger.mark())
         elif ch == cfg.get("undo_key", "u"):
@@ -743,26 +689,50 @@ class LoggingScreen(Screen):
         else:
             self.write_lines(self.logger.append_entry(f"STOP TASK: {label}"))
 
-    def action_note(self) -> None:
-        self.app.push_screen(NoteModal(), self._after_note)
+    # -- inline bottom prompt (note / juice) -------------------------------- #
 
-    def _after_note(self, text) -> None:
-        if text:
-            self.write_lines(self.logger.note(text))
+    def open_inline(self, mode: str) -> None:
+        self.cmd_mode = mode
+        self.input_active = True
+        prompt = "note ›" if mode == "note" else "juice mL ›"
+        self.query_one("#cmdprompt", Static).update(prompt)
+        self.query_one("#cmdbar").remove_class("hidden")
+        inp = self.query_one("#cmdline", Input)
+        inp.value = ""
+        inp.focus()
 
-    def action_liquid(self) -> None:
-        self.app.push_screen(LiquidModal(), self._after_liquid)
+    def close_inline(self) -> None:
+        self.input_active = False
+        self.cmd_mode = None
+        self.query_one("#cmdbar").add_class("hidden")
+        self.query_one("#log", RichLog).focus()
 
-    def _after_liquid(self, result) -> None:
-        if not result:
+    def action_cancel_inline(self) -> None:
+        if self.input_active:
+            self.close_inline()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id != "cmdline":
             return
-        if result.get("mode") == "set_total":
-            self.logger.set_total_liquid(result.get("total_ml", "").strip())
-            self.app.notify("Updated header: total liquid consumed.")
-        else:
-            entry = result.get("entry", "")
-            if entry:
-                self.write_lines(self.logger.append_entry(entry))
+        mode = self.cmd_mode
+        value = event.value
+        self.close_inline()
+        if mode == "note":
+            if value.strip():
+                self.write_lines(self.logger.note(value))
+        elif mode == "liquid":
+            self._log_liquid_quick(value)
+
+    def _log_liquid_quick(self, raw: str) -> None:
+        parts = raw.split()
+        if not parts:
+            return
+        amount = parts[0]
+        ltype = "diluted juice"
+        if len(parts) > 1:
+            token = parts[1].lower()
+            ltype = "water" if token.startswith("w") else " ".join(parts[1:])
+        self.write_lines(self.logger.append_entry(f"LIQUID: {amount} mL ({ltype})"))
 
     def action_undo(self) -> None:
         removed = self.logger.undo()
@@ -808,8 +778,8 @@ class LoggingScreen(Screen):
         lines += [
             "",
             "Live keys:",
-            f"  {cfg.get('note_key', 'n')}   note (multiline, full editing)",
-            f"  {cfg.get('liquid_key', 'l')}   liquid event / set total",
+            f"  {cfg.get('note_key', 'n')}   note (inline prompt at the bottom)",
+            f"  {cfg.get('liquid_key', 'l')}   juice: type mL + enter (add ' w' for water)",
             f"  {cfg.get('mark_key', 'm')}   section mark",
             f"  {cfg.get('undo_key', 'u')}   undo last entry (this session)",
             "  c   correct the current recording number",

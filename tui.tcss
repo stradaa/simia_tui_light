@@ -27,6 +27,30 @@ Screen {
     scrollbar-size-vertical: 1;
 }
 
+/* inline note / juice prompt (no pop-up; the event log stays visible) */
+#cmdbar {
+    dock: bottom;
+    height: 1;
+    background: $surface;
+}
+
+#cmdbar.hidden {
+    display: none;
+}
+
+#cmdprompt {
+    width: auto;
+    height: 1;
+    padding: 0 1;
+    color: $success;
+    text-style: bold;
+}
+
+#cmdline {
+    width: 1fr;
+    background: $surface;
+}
+
 /* ---- modal dialogs ---- */
 
 ModalScreen {
@@ -93,8 +117,42 @@ ModalScreen {
     align-horizontal: right;
 }
 
-.buttons Button {
-    margin-left: 1;
+/* ---- minimal controls: underline-on-focus, bold-on-select ---- */
+
+Input {
+    border: none;
+    height: 1;
+    padding: 0 1;
+    background: $panel;
+}
+
+Input:focus {
+    border: none;
+}
+
+Button {
+    border: none;
+    height: 1;
+    min-width: 4;
+    padding: 0 1;
+    margin: 0 0 0 1;
+    background: transparent;
+    color: $text-muted;
+}
+
+Button.-primary {
+    color: $primary;
+}
+
+Button:hover {
+    background: transparent;
+    text-style: underline;
+}
+
+Button:focus {
+    background: transparent;
+    color: $text;
+    text-style: bold underline;
 }
 
 OptionList {
@@ -102,4 +160,20 @@ OptionList {
     max-height: 14;
     border: none;
     background: $surface;
+}
+
+OptionList > .option-list--option-highlighted,
+OptionList:focus > .option-list--option-highlighted {
+    background: transparent;
+    color: $text;
+    text-style: bold underline;
+}
+
+Select > SelectCurrent {
+    border: none;
+    background: $panel;
+}
+
+RadioButton.-on {
+    text-style: bold;
 }
