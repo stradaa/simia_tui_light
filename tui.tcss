@@ -103,6 +103,13 @@ ModalScreen {
     color: $text-muted;
 }
 
+/* live "this is what you picked" readout in the copy-dest / end dialogs */
+.dest-selected {
+    height: auto;
+    padding: 1 0 0 0;
+    color: $accent;
+}
+
 .field-label {
     color: $text-muted;
     padding-top: 1;

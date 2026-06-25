@@ -842,6 +842,8 @@ class Logger:
             else:
                 rec_label = "?"
             return self.wrap_standalone_line(f"[{ts}] <<< REC {rec_label} STOP <<<")
+        if upper == "LOGGING RESUMED":
+            return self.wrap_standalone_line(f"[{ts}] ··· LOGGING RESUMED ···")
         if text.strip() == "---":
             return self.wrap_standalone_line("---")
         return [f"- [{ts}] {text}"]
@@ -966,6 +968,9 @@ class Logger:
         self.current_task = task_name if start_idx > stop_idx else None
 
         self.session_started = True
+        # Stamp a visible marker so the appended log clearly shows it was
+        # reopened/amended rather than written in one continuous sitting.
+        self.append_entry("LOGGING RESUMED")
         return session
 
     def set_recording_index(self, n: int):

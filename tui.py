@@ -106,6 +106,8 @@ def colorize(line: str) -> str:
         return f"[{RP['foam']}]{escape(s)}[/]"
     if "<<< REC" in up and "STOP" in up:
         return f"[{RP['love']}]{escape(s)}[/]"
+    if "LOGGING RESUMED" in up:
+        return f"[{RP['gold']}]{escape(s)}[/]"
 
     if s.startswith("- ["):
         close = s.find("] ")
@@ -328,20 +330,52 @@ class CopyDestScreen(ModalScreen):
         with Vertical(classes="dialog wide tall"):
             yield Static("Copy destination", classes="dialog-title")
             yield Static(
+                "Highlight a destination, then press Enter or “Use this destination”.\n"
                 "At session end the log is copied to <dest>/<YYMMDD>/<file>.md",
                 classes="hint",
             )
-            yield Input(placeholder="…or type a custom parent folder and press Enter", id="path")
             options = []
             for t in self.targets:
                 options.append(Option(f"{t['label']}\n   {t['path']}"))
-            options.append(Option("⊘  Skip external copy for this session"))
+            options.append(Option("⊘  Skip — keep the log in logs/ only"))
             yield OptionList(*options, id="dests")
+            yield Input(placeholder="…or type a custom parent folder and press Enter", id="path")
+            yield Static("", id="dest-selected", classes="dest-selected")
+            with Horizontal(classes="buttons"):
+                yield Button("Use this destination", variant="primary", id="confirm")
+                yield Button("Skip", id="skip")
 
     def on_mount(self) -> None:
         dests = self.query_one("#dests", OptionList)
         if self.targets:
             dests.highlighted = self.default_index
+        dests.focus()
+        self._update_preview()
+
+    def _update_preview(self) -> None:
+        sel = self.query_one("#dest-selected", Static)
+        idx = self.query_one("#dests", OptionList).highlighted
+        if idx is not None and idx < len(self.targets):
+            target = self.targets[idx]
+            folder = self.logger.build_copy_preview_path(target["path"])
+            sel.update(
+                f"[b]Selected:[/] {escape(target['label'])}\n"
+                f"→ will copy to: {escape(str(folder))}/"
+            )
+        else:
+            sel.update("[b]Selected:[/] no external copy — log kept in logs/ only")
+
+    def on_option_list_option_highlighted(
+        self, event: OptionList.OptionHighlighted
+    ) -> None:
+        self._update_preview()
+
+    def _confirm_highlighted(self) -> None:
+        idx = self.query_one("#dests", OptionList).highlighted
+        if idx is not None and idx < len(self.targets):
+            self.dismiss(self.targets[idx]["path"])
+        else:
+            self.dismiss(None)
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         if event.option_index < len(self.targets):
@@ -353,8 +387,62 @@ class CopyDestScreen(ModalScreen):
         value = event.value.strip()
         self.dismiss(value or None)
 
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "confirm":
+            self._confirm_highlighted()
+        else:
+            self.dismiss(None)
+
     def action_skip(self) -> None:
         self.dismiss(None)
+
+
+class EndSessionScreen(ModalScreen[str]):
+    """Final confirmation before ending: spell out exactly what will be saved
+    where, and let the user flip save/skip or change the destination."""
+
+    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+
+    def __init__(self, logger):
+        super().__init__()
+        self.logger = logger
+
+    def compose(self) -> ComposeResult:
+        root = str(self.logger.copy_target_root or "").strip()
+        local = self.logger.file_path
+        with Vertical(classes="dialog wide"):
+            yield Static("End session", classes="dialog-title")
+            yield Static(
+                f"Local log (always kept):\n   {escape(str(local))}",
+                classes="hint",
+            )
+            if root:
+                folder = self.logger.build_copy_preview_path(root)
+                yield Static(
+                    f"[b]✓ External copy ON[/] — this log WILL be saved to:\n"
+                    f"   {escape(str(folder))}",
+                    classes="dest-selected",
+                )
+            else:
+                yield Static(
+                    "[b]✗ External copy OFF[/] — the log will stay in logs/ only.",
+                    classes="dest-selected",
+                )
+            with Horizontal(classes="buttons"):
+                if root:
+                    yield Button("End & save copy", variant="primary", id="save")
+                    yield Button("End without copy", id="nosave")
+                    yield Button("Change path…", id="change")
+                else:
+                    yield Button("End (local only)", variant="primary", id="nosave")
+                    yield Button("Choose a copy path…", id="change")
+                yield Button("Cancel", id="cancel")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.dismiss(event.button.id)
+
+    def action_cancel(self) -> None:
+        self.dismiss("cancel")
 
 
 # --------------------------------------------------------------------------- #
@@ -792,16 +880,34 @@ class LoggingScreen(Screen):
         self.app.push_screen(HelpModal("\n".join(lines)))
 
     def action_end(self) -> None:
-        self.app.push_screen(
-            ConfirmModal("End this session and copy the log?", "End session", "Cancel"),
-            self._after_end_confirm,
-        )
+        self.app.push_screen(EndSessionScreen(self.logger), self._after_end_decision)
 
-    def _after_end_confirm(self, ok) -> None:
-        if not ok:
+    def _after_end_decision(self, decision) -> None:
+        if decision in (None, "cancel"):
             return
+        if decision == "change":
+            animal = self.logger.session_data.get("animal_id", "")
+            self.app.push_screen(
+                CopyDestScreen(self.logger, animal_hint=animal),
+                self._after_change_dest,
+            )
+            return
+        if decision == "nosave":
+            self.logger.copy_target_root = None
+            self.write_lines(self.logger.stop())
+            self._finish("Session ended — log kept in logs/ only.")
+            return
+        # decision == "save"
         self.write_lines(self.logger.stop())
         self._do_copy(create_missing=False)
+
+    def _after_change_dest(self, copy_root) -> None:
+        # A returned path updates the destination; skipping (None) keeps the
+        # current choice — use "End without copy" to deliberately clear it.
+        if copy_root:
+            self.logger.copy_target_root = copy_root
+            self.app.notify(f"Copy destination set to {copy_root}")
+        self.app.push_screen(EndSessionScreen(self.logger), self._after_end_decision)
 
     def _do_copy(self, create_missing: bool) -> None:
         result = self.logger.do_external_copy(create_missing=create_missing)
