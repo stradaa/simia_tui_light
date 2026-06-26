@@ -55,25 +55,44 @@ parse later for print-ready summaries.
   anything is written.
 - **Print-ready export.** Generate a condensed, low-ink HTML packet across a date
   range for one animal — open in a browser and print or save as PDF.
-- **Yours to configure.** Defaults, dropdown choices, task lists, and every
-  hotkey live in one JSON file.
+- **No config files to wrangle.** Defaults, dropdown choices, task lists, and
+  copy destinations are all edited inside the app — there's a setup wizard on
+  first run and a **Settings** screen you can open any time.
 
 ## Install & run
 
+Install it as a standalone command with [pipx](https://pipx.pypa.io/) (or
+`uv tool install .`):
+
 ```bash
-pip install -r requirements.txt
-python lablog.py
+pipx install .        # from a checkout
+simia-log             # run it from anywhere
 ```
 
-Requires Python 3 and `textual>=8.2`. On first run, if no config exists, the app
-prompts for a few values and writes `lablog_config.json` for you.
+Or for development, with an editable install or [Hatch](https://hatch.pypa.io/):
+
+```bash
+pip install -e .      # then: simia-log   (or: python -m simia_log)
+# or
+hatch run app         # runs python -m simia_log inside a managed env
+```
+
+Requires Python 3.10+; dependencies (`textual`, `platformdirs`) install
+automatically. **On first run** the app opens a short setup wizard — pick your
+behaviorists, animals, project, and where logs should live. Nothing to edit by
+hand.
+
+> Already using the old `python lablog.py` layout? On first launch from your
+> existing folder, the app imports your `lablog_config.json` and **keeps using
+> your current `logs/` directory in place** — your logs are never moved or
+> copied. See [Configuration](#configuration).
 
 ## How a session works
 
 ```
         ┌─────────────┐
-        │ Start screen │  New session  ·  Continue existing log  ·  Quit
-        └──────┬───────┘
+        │ Start screen │  New session · Continue existing log · Settings · Quit
+        └──────┬───────┘     (first run opens Settings as a setup wizard)
                │
    New ────────┤──────── Continue
    fill the    │         pick a recent log (or type a path)
@@ -96,8 +115,9 @@ prompts for a few values and writes `lablog_config.json` for you.
 
 ### 1. Start
 
-The welcome screen offers **New session**, **Continue existing log**, or
-**Quit**.
+The welcome screen offers **New session**, **Continue existing log**,
+**Settings**, or **Quit**. On your very first run it opens **Settings** as a
+setup wizard so you can fill in your defaults before logging anything.
 
 ### 2. Set up
 
@@ -148,6 +168,7 @@ it before copying.
 | `u` | undo the last entry *(this session only)* |
 | `c` | correct the current recording number after a misclick |
 | `/` | edit session details — all header fields in one form |
+| `S` | open Settings (defaults, dropdown choices, folders) — capital `S` so it's hard to hit by accident |
 | `r` | reload config |
 | `p` | jump to newest / re-render the pane |
 | `h` | help |
@@ -208,7 +229,7 @@ Scan saved logs and generate a condensed, print-optimized HTML packet for one
 animal across a date range:
 
 ```bash
-python lablog.py --export
+simia-log --export
 ```
 
 You'll be prompted for:
@@ -227,8 +248,8 @@ Matching sessions:
   3. 2026-03-13 | project omitted | 260313_Bowser.md
 ```
 
-Confirm and it writes an `.html` file into `exports/`, named from the animal,
-optional project, and date range. The output is built for printing:
+Confirm and it writes an `.html` file into your exports folder, named from the
+animal, optional project, and date range. The output is built for printing:
 
 - low-ink black-on-white styling
 - a compact **Matching Sessions** index kept on page 1
@@ -239,23 +260,39 @@ optional project, and date range. The output is built for printing:
 
 Open it in a browser and print directly, or print to PDF.
 
-## Configuration (`lablog_config.json`)
+## Configuration
 
-All personalization lives in `lablog_config.json` next to the script. If it's
-missing or invalid, the app prompts for a minimal config and writes it
-automatically. Use it to hold your defaults and selection lists so you don't
-retype common values every session, define your macros and tasks, and remap any
-hotkey.
+You normally **never touch a config file** — open **Settings** (the button on
+the start screen, or press `S` during a session) to edit your behaviorist /
+animal / project choices and defaults, the task list, the logs folder, and copy
+destinations. Changes save immediately. The first run walks you through the same
+screen as a setup wizard.
 
-**Saving & copying.** The log is always saved in `output_dir`. List one or more
-shared-drive folders under `copy_on_stop_targets`; the app offers them at setup
-and auto-selects the one matching the animal. Older configs that used a single
-`copy_on_stop_dir` still work — prefer `copy_on_stop_targets` for multiple
-destinations.
+**Where things live.** Settings are stored in your platform config directory
+(via [platformdirs](https://github.com/tox-dev/platformdirs), e.g.
+`~/Library/Application Support/simia-log/config.json` on macOS or
+`~/.config/simia-log/config.json` on Linux). Logs and exports default to your
+platform data directory, but the **logs folder is shown and editable in
+Settings**, so you can point it anywhere you like. Set `SIMIA_LOG_CONFIG=/path`
+or pass `--config /path` to use a specific config file instead.
+
+**Migrating an older setup.** If you previously ran from a checkout with
+`lablog_config.json` and a `logs/` folder, the first launch from that folder
+imports your config and pins the logs folder to its current absolute path — so
+the app keeps writing to your existing logs **in place, with nothing moved**.
+
+**Saving & copying.** The log is always saved in your logs folder. Add one or
+more shared-drive folders as copy destinations (a `Label = /path` per line in
+Settings); the app offers them at session start and auto-selects the one
+matching the animal. Older configs that used a single `copy_on_stop_dir` still
+work.
+
+If you'd rather edit the JSON directly, every setting maps to a key below.
 
 | Key | Purpose |
 |-----|---------|
-| `output_dir` | Where session `.md` files are written locally |
+| `output_dir` | Where session `.md` files are written locally (absolute path) |
+| `exports_dir` | Where `--export` writes HTML packets (blank = platform data dir) |
 | `macros` | Hotkey → label/text for the macro actions (`1`–`4` by default) |
 | `session_fields` | The header fields collected per session (`id` + `label`) |
 | `field_options` | Dropdown choices for specific fields |

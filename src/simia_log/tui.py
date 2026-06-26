@@ -9,6 +9,7 @@ work), a startup wizard (new session or continue an existing log), and a way to
 correct the current recording number.
 """
 
+import time
 from pathlib import Path
 
 from rich.markup import escape
@@ -21,7 +22,6 @@ from textual.screen import ModalScreen, Screen
 from textual.theme import Theme
 from textual.widgets import (
     Button,
-    Footer,
     Header,
     Input,
     Label,
@@ -31,15 +31,18 @@ from textual.widgets import (
     RichLog,
     Select,
     Static,
+    TextArea,
 )
 from textual.widgets.option_list import Option
 
-from lablog import parse_log_file
+from .lablog import compute_session_summary, parse_log_file
 
 try:
-    from ascii_art import HEADER
+    from .ascii_art import HEADER, MONKEY_FACES, STATE_LABELS
 except ImportError:  # pragma: no cover
     HEADER = ""
+    MONKEY_FACES = {}
+    STATE_LABELS = {}
 
 
 # --------------------------------------------------------------------------- #
@@ -83,6 +86,41 @@ ROSE_PINE = Theme(
         "input-selection-background": RP["overlay"],
     },
 )
+
+
+# --------------------------------------------------------------------------- #
+# Personality: the little monkey's mood line
+# --------------------------------------------------------------------------- #
+
+# Colour each mood so the one-line mood bar reads at a glance.
+MOOD_COLORS = {
+    "ready": RP["subtle"],
+    "waiting": RP["muted"],
+    "rec_start": RP["foam"],
+    "rec_stop": RP["love"],
+    "liquid": RP["pine"],
+    "trial": RP["gold"],
+}
+
+# Seconds of no activity before the monkey gets bored/sleepy.
+IDLE_SECONDS = 90
+# How long a one-off reaction (juice!) lingers before reverting to base mood.
+FLASH_SECONDS = 4
+
+
+def summary_face(summary: dict) -> str:
+    """Pick a monkey face for the end-of-session summary based on how it went."""
+    if not MONKEY_FACES:
+        return ""
+    s = summary
+    if s["liquid_ml"] <= 0 and s["recordings"] == 0 and s["tasks"] == 0:
+        return MONKEY_FACES.get("sleepy", "")  # a whole lot of nothing
+    trials = s["trials_success"] + s["trials_fail"]
+    if trials and s["trials_success"] >= s["trials_fail"]:
+        return MONKEY_FACES.get("happy", "")
+    if s["liquid_ml"] > 0:
+        return MONKEY_FACES.get("sweet", "")
+    return MONKEY_FACES.get("cool", "")
 
 
 # --------------------------------------------------------------------------- #
@@ -141,6 +179,13 @@ def select_options(values, current):
     return opts
 
 
+def dialog(title: str, classes: str = "dialog") -> Vertical:
+    """A modal container whose title is rendered in its top border."""
+    box = Vertical(classes=classes)
+    box.border_title = title
+    return box
+
+
 # --------------------------------------------------------------------------- #
 # Reusable confirm dialog
 # --------------------------------------------------------------------------- #
@@ -155,8 +200,8 @@ class ConfirmModal(ModalScreen[bool]):
         self.no_label = no_label
 
     def compose(self) -> ComposeResult:
-        with Vertical(classes="dialog"):
-            yield Static(self.prompt, classes="dialog-title")
+        with dialog("Confirm"):
+            yield Static(self.prompt, classes="dialog-body")
             with Horizontal(classes="buttons"):
                 yield Button(self.yes_label, variant="primary", id="yes")
                 yield Button(self.no_label, id="no")
@@ -176,14 +221,16 @@ class StartScreen(ModalScreen[str]):
     BINDINGS = [Binding("escape", "quit", "Quit")]
 
     def compose(self) -> ComposeResult:
-        with Vertical(classes="dialog wide tall"):
+        with dialog("Simia Lab Log", "dialog wide tall"):
             with VerticalScroll(classes="body"):
                 if HEADER:
                     yield Static(HEADER, classes="banner")
-                yield Static("SIMIA Lab Log", classes="dialog-title")
+                else:
+                    yield Static("SIMIA Lab Log", classes="dialog-body")
             with Horizontal(classes="buttons"):
                 yield Button("New session", variant="primary", id="new")
                 yield Button("Continue existing log", id="continue")
+                yield Button("Settings", id="settings")
                 yield Button("Quit", id="quit")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -204,8 +251,7 @@ class NewSessionScreen(ModalScreen):
         self._fields = logger.get_session_fields()
 
     def compose(self) -> ComposeResult:
-        with Vertical(classes="dialog wide tall"):
-            yield Static("New session", classes="dialog-title")
+        with dialog("New session", "dialog wide tall"):
             with VerticalScroll(classes="form"):
                 for field in self._fields:
                     fid = field["id"]
@@ -262,8 +308,7 @@ class ContinueScreen(ModalScreen):
         return files[:40]
 
     def compose(self) -> ComposeResult:
-        with Vertical(classes="dialog wide tall"):
-            yield Static("Continue an existing log", classes="dialog-title")
+        with dialog("Continue an existing log", "dialog wide tall"):
             yield Input(placeholder="…or type a path and press Enter", id="path")
             options = []
             for p in self._paths:
@@ -327,8 +372,7 @@ class CopyDestScreen(ModalScreen):
                 break
 
     def compose(self) -> ComposeResult:
-        with Vertical(classes="dialog wide tall"):
-            yield Static("Copy destination", classes="dialog-title")
+        with dialog("Copy destination", "dialog wide tall"):
             yield Static(
                 "Highlight a destination, then press Enter or “Use this destination”.\n"
                 "At session end the log is copied to <dest>/<YYMMDD>/<file>.md",
@@ -410,8 +454,7 @@ class EndSessionScreen(ModalScreen[str]):
     def compose(self) -> ComposeResult:
         root = str(self.logger.copy_target_root or "").strip()
         local = self.logger.file_path
-        with Vertical(classes="dialog wide"):
-            yield Static("End session", classes="dialog-title")
+        with dialog("End session", "dialog wide"):
             yield Static(
                 f"Local log (always kept):\n   {escape(str(local))}",
                 classes="hint",
@@ -445,6 +488,123 @@ class EndSessionScreen(ModalScreen[str]):
         self.dismiss("cancel")
 
 
+class SettingsScreen(ModalScreen[bool]):
+    """Edit defaults and options in-app so users never touch the JSON.
+
+    Reachable from the start screen, as the first-run setup wizard, and with
+    `S` during a live session. Dismisses True when settings were saved.
+    """
+
+    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+
+    # (config field id, human label) for the three list-backed fields.
+    LIST_FIELDS = [
+        ("behaviorists", "Behaviorist(s)"),
+        ("animal_id", "Simia (monkey)"),
+        ("project", "Project"),
+    ]
+
+    def __init__(self, logger, setup: bool = False):
+        super().__init__()
+        self.logger = logger
+        self.setup = setup
+
+    @staticmethod
+    def _csv(values) -> str:
+        return ", ".join(str(v) for v in values if str(v).strip())
+
+    def _targets_text(self) -> str:
+        lines = []
+        for t in self.logger.get_copy_targets():
+            label = str(t.get("label", "")).strip()
+            path = str(t.get("path", "")).strip()
+            lines.append(f"{label} = {path}" if label and label != path else path)
+        return "\n".join(lines)
+
+    def compose(self) -> ComposeResult:
+        cfg = self.logger.config
+        options = cfg.get("field_options", {})
+        defaults = cfg.get("field_defaults", {})
+        title = "Welcome — set up Simia Log" if self.setup else "Settings"
+        with dialog(title, "dialog wide tall"):
+            yield Static(
+                "Choices are comma-separated. These become the dropdowns and "
+                "pre-filled defaults on the new-session form.",
+                classes="hint",
+            )
+            with VerticalScroll(classes="form"):
+                for fid, label in self.LIST_FIELDS:
+                    opts = options.get(fid, []) if isinstance(options, dict) else []
+                    default = defaults.get(fid, "") if isinstance(defaults, dict) else ""
+                    yield Label(f"{label} — choices", classes="field-label")
+                    yield Input(value=self._csv(opts), id=f"opt_{fid}")
+                    yield Label(f"{label} — default", classes="field-label")
+                    yield Input(value=str(default or ""), id=f"def_{fid}")
+
+                yield Label("Tasks — choices", classes="field-label")
+                yield Input(value=self._csv(cfg.get("tasks", [])), id="tasks")
+
+                yield Label("Logs folder", classes="field-label")
+                yield Input(value=str(cfg.get("output_dir", "")), id="output_dir")
+
+                yield Label(
+                    "Copy destinations — one per line, “Label = /path”",
+                    classes="field-label",
+                )
+                yield TextArea(self._targets_text(), id="copy_targets")
+            with Horizontal(classes="buttons"):
+                yield Button("Save", variant="primary", id="save")
+                yield Button("Cancel", id="cancel")
+
+    @staticmethod
+    def _parse_csv(raw: str):
+        return [part.strip() for part in raw.split(",") if part.strip()]
+
+    @staticmethod
+    def _parse_targets(text: str):
+        targets = []
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            if "=" in line:
+                label, path = line.split("=", 1)
+                label, path = label.strip(), path.strip()
+            else:
+                label, path = "", line
+            if path:
+                targets.append({"label": label or Path(path).name or path, "path": path})
+        return targets
+
+    def _save(self) -> None:
+        import copy
+
+        cfg = copy.deepcopy(self.logger.config)
+        cfg.setdefault("field_options", {})
+        cfg.setdefault("field_defaults", {})
+        for fid, _label in self.LIST_FIELDS:
+            cfg["field_options"][fid] = self._parse_csv(self.query_one(f"#opt_{fid}", Input).value)
+            cfg["field_defaults"][fid] = self.query_one(f"#def_{fid}", Input).value.strip()
+        cfg["tasks"] = self._parse_csv(self.query_one("#tasks", Input).value)
+        cfg["output_dir"] = self.query_one("#output_dir", Input).value.strip() or cfg.get(
+            "output_dir", ""
+        )
+        cfg["copy_on_stop_targets"] = self._parse_targets(
+            self.query_one("#copy_targets", TextArea).text
+        )
+        self.logger.save_config(cfg)
+        self.dismiss(True)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "save":
+            self._save()
+        else:
+            self.dismiss(False)
+
+    def action_cancel(self) -> None:
+        self.dismiss(False)
+
+
 # --------------------------------------------------------------------------- #
 # Live-session modals
 # --------------------------------------------------------------------------- #
@@ -457,8 +617,7 @@ class TaskStartModal(ModalScreen):
         self.tasks = tasks
 
     def compose(self) -> ComposeResult:
-        with Vertical(classes="dialog wide"):
-            yield Static("Start task", classes="dialog-title")
+        with dialog("Start task", "dialog wide"):
             if self.tasks:
                 with RadioSet(id="tasks"):
                     for i, t in enumerate(self.tasks):
@@ -496,8 +655,7 @@ class TaskStopModal(ModalScreen):
         self.task_label = task_label
 
     def compose(self) -> ComposeResult:
-        with Vertical(classes="dialog wide"):
-            yield Static(f"Stop task: {self.task_label}", classes="dialog-title")
+        with dialog(f"Stop task: {self.task_label}", "dialog wide"):
             yield Label("Trials (successful/failed), e.g. 12/3")
             yield Input(placeholder="12/3", id="trials")
             with Horizontal(classes="buttons"):
@@ -528,8 +686,7 @@ class EditMetadataModal(ModalScreen):
         self._fields = logger.get_session_fields()
 
     def compose(self) -> ComposeResult:
-        with Vertical(classes="dialog wide tall"):
-            yield Static("Edit session details", classes="dialog-title")
+        with dialog("Edit session details", "dialog wide tall"):
             with VerticalScroll(classes="form"):
                 for field in self._fields:
                     fid = field["id"]
@@ -573,8 +730,7 @@ class SetRecModal(ModalScreen):
         self.current = current
 
     def compose(self) -> ComposeResult:
-        with Vertical(classes="dialog"):
-            yield Static("Correct current recording number", classes="dialog-title")
+        with dialog("Correct current recording number"):
             yield Static(
                 f"Currently {self.current}. The next START will use this + 1.",
                 classes="hint",
@@ -612,9 +768,52 @@ class HelpModal(ModalScreen):
         self.help_text = help_text
 
     def compose(self) -> ComposeResult:
-        with Vertical(classes="dialog wide"):
-            yield Static("Keys", classes="dialog-title")
+        with dialog("Keys", "dialog wide"):
             yield Static(self.help_text, classes="help-body")
+            with Horizontal(classes="buttons"):
+                yield Button("Close", variant="primary", id="close")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.dismiss(None)
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+
+class SummaryModal(ModalScreen):
+    """End-of-session recap: duration and headline tallies."""
+
+    BINDINGS = [Binding("escape", "close", "Close")]
+
+    def __init__(self, summary: dict, duration: str, file_path):
+        super().__init__()
+        self.summary = summary
+        self.duration = duration
+        self.file_path = file_path
+
+    @staticmethod
+    def _fmt_ml(value: float) -> str:
+        return f"{value:.0f}" if float(value).is_integer() else f"{value:.1f}"
+
+    def compose(self) -> ComposeResult:
+        s = self.summary
+        rows = [
+            ("Duration", self.duration or "—"),
+            ("Recordings", str(s["recordings"])),
+            ("Tasks run", str(s["tasks"])),
+            ("Trials (ok / fail)", f"{s['trials_success']} / {s['trials_fail']}"),
+            ("Liquid", f"{self._fmt_ml(s['liquid_ml'])} mL"),
+            ("Notes", str(s["notes"])),
+        ]
+        face = summary_face(s)
+        with dialog("Session summary", "dialog wide"):
+            if face:
+                yield Static(face, classes="summary-face")
+            for label, value in rows:
+                with Horizontal(classes="summary-row"):
+                    yield Static(label, classes="summary-label")
+                    yield Static(f"[b]{escape(value)}[/]", classes="summary-value")
+            yield Static(f"[dim]{escape(str(self.file_path))}[/]", classes="hint")
             with Horizontal(classes="buttons"):
                 yield Button("Close", variant="primary", id="close")
 
@@ -637,10 +836,20 @@ class LoggingScreen(Screen):
         self.logger = logger
         self.input_active = False
         self.cmd_mode = None
+        self._started_monotonic = None
+        self._clock_timer = None
+        self._showing_placeholder = False
+        self._recording_active = False
+        self._task_active = False
+        self._last_activity = 0.0
+        self._flash_key = None
+        self._flash_until = 0.0
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         yield Static("", id="statusbar")
+        if STATE_LABELS:
+            yield Static("", id="moodbar")
         yield RichLog(markup=True, wrap=True, id="log")
         yield Static("", id="hintbar")
         with Horizontal(id="cmdbar", classes="hidden"):
@@ -650,26 +859,84 @@ class LoggingScreen(Screen):
     # -- population / refresh ------------------------------------------------ #
 
     def populate(self) -> None:
+        self._started_monotonic = time.monotonic()
+        self._last_activity = self._started_monotonic
+        self._task_active = bool(self.logger.current_task)
+        if self._clock_timer is None:
+            self._clock_timer = self.set_interval(1.0, self._tick)
         self.refresh_status()
         self.refresh_hint()
+        self.refresh_mood()
         self.reload_log_pane()
         log = self.query_one("#log", RichLog)
         log.focus()
         if self.logger.file_path:
-            self.app.notify(f"Logging to {self.logger.file_path}")
+            self.app.notify(
+                str(self.logger.file_path),
+                title="Logging started",
+                severity="information",
+            )
+
+    def _elapsed_str(self) -> str:
+        if self._started_monotonic is None:
+            return ""
+        secs = int(time.monotonic() - self._started_monotonic)
+        h, rem = divmod(secs, 3600)
+        m, s = divmod(rem, 60)
+        return f"{h}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
 
     def refresh_status(self) -> None:
         lg = self.logger
         monkey = lg.session_data.get("animal_id", "") or "—"
         task = lg.current_task or "—"
         fname = lg.file_path.name if lg.file_path else "—"
+        elapsed = self._elapsed_str()
+        clock = f"⏱ [b]{elapsed}[/]   " if elapsed else ""
         text = (
             f"[b]{escape(monkey)}[/]   "
             f"REC [b]{lg.recording_index}[/]   "
             f"task [b]{escape(task)}[/]   "
+            f"{clock}"
             f"[dim]{escape(fname)}[/]"
         )
         self.query_one("#statusbar", Static).update(text)
+
+    # -- the monkey's mood --------------------------------------------------- #
+
+    def _tick(self) -> None:
+        self.refresh_status()
+        self.refresh_mood()
+
+    def _bump_activity(self) -> None:
+        self._last_activity = time.monotonic()
+
+    def _flash_mood(self, key: str) -> None:
+        """Show a one-off reaction (e.g. juice!) that fades back to base mood."""
+        self._flash_key = key
+        self._flash_until = time.monotonic() + FLASH_SECONDS
+        self.refresh_mood()
+
+    def _base_mood(self, now: float) -> str:
+        if self._task_active:
+            return "trial"
+        if self._recording_active:
+            return "rec_start"
+        if now - self._last_activity > IDLE_SECONDS:
+            return "waiting"
+        return "ready"
+
+    def refresh_mood(self) -> None:
+        if not STATE_LABELS:
+            return
+        now = time.monotonic()
+        if self._flash_key and now < self._flash_until:
+            key = self._flash_key
+        else:
+            self._flash_key = None
+            key = self._base_mood(now)
+        label = STATE_LABELS.get(key, STATE_LABELS.get("ready", ""))
+        color = MOOD_COLORS.get(key, RP["subtle"])
+        self.query_one("#moodbar", Static).update(f"[{color}]{escape(label)}[/]")
 
     def refresh_hint(self) -> None:
         cfg = self.logger.config
@@ -684,6 +951,7 @@ class LoggingScreen(Screen):
             f"[b]{cfg.get('undo_key', 'u')}[/] undo  "
             f"[b]c[/] set-rec  "
             f"[b]/[/] edit  "
+            f"[b]S[/] settings  "
             f"[b]{cfg.get('reload_key', 'r')}[/] reload  "
             f"[b]{cfg.get('print_key', 'p')}[/] bottom  "
             f"[b]{cfg.get('help_key', 'h')}[/] help  "
@@ -694,13 +962,27 @@ class LoggingScreen(Screen):
     def reload_log_pane(self) -> None:
         log = self.query_one("#log", RichLog)
         log.clear()
-        for line in self.logger.event_section_lines():
-            log.write(colorize(line))
+        lines = self.logger.event_section_lines()
+        if not any(line.strip() for line in lines):
+            log.write(
+                f"[{RP['muted']}]  No events yet — your actions will appear here. "
+                f"Press [b]h[/b] for help.[/]"
+            )
+            self._showing_placeholder = True
+        else:
+            for line in lines:
+                log.write(colorize(line))
+            self._showing_placeholder = False
         log.scroll_end(animate=False)
 
     def write_lines(self, lines) -> None:
+        real = list(lines or [])
+        # Clear the empty-state placeholder once the first real entry arrives.
+        if self._showing_placeholder and any(line.strip() for line in real):
+            self.reload_log_pane()
+            return
         log = self.query_one("#log", RichLog)
-        for line in lines or []:
+        for line in real:
             log.write(colorize(line))
         log.scroll_end(animate=False)
 
@@ -711,6 +993,8 @@ class LoggingScreen(Screen):
         if ch is None or not self.logger.session_started or self.input_active:
             return
         if self.handle_char(ch):
+            self._bump_activity()
+            self.refresh_mood()
             event.stop()
             event.prevent_default()
 
@@ -727,13 +1011,15 @@ class LoggingScreen(Screen):
         elif ch == cfg.get("reload_key", "r"):
             self.logger.reload_config()
             self.refresh_hint()
-            self.app.notify("Config reloaded.")
+            self.app.notify("Config reloaded.", title="Config", severity="information")
         elif ch == cfg.get("print_key", "p"):
             self.reload_log_pane()
         elif ch == "c":
             self.action_set_rec()
         elif ch == "/":
             self.action_edit_metadata()
+        elif ch == "S":
+            self.action_settings()
         elif ch == cfg.get("help_key", "h"):
             self.action_help()
         elif ch == cfg.get("stop_key", "q"):
@@ -760,13 +1046,22 @@ class LoggingScreen(Screen):
             self.app.push_screen(TaskStopModal(label), self._after_task_stop)
         elif text:
             self.write_lines(self.logger.append_entry(text))
+            if upper == "START RECORDING":
+                self._recording_active = True
+                self._flash_mood("rec_start")
+            elif upper == "STOP RECORDING":
+                self._recording_active = False
+                self._flash_mood("rec_stop")
             self.refresh_status()
+            self.refresh_mood()
 
     def _after_task_start(self, task) -> None:
         if task:
             self.logger.current_task = task
+            self._task_active = True
             self.write_lines(self.logger.append_entry(f"START TASK: {task}"))
             self.refresh_status()
+            self.refresh_mood()
 
     def _after_task_stop(self, trials) -> None:
         if trials is None:
@@ -776,6 +1071,8 @@ class LoggingScreen(Screen):
             self.write_lines(self.logger.append_entry(f"STOP TASK: {label} [{trials}]"))
         else:
             self.write_lines(self.logger.append_entry(f"STOP TASK: {label}"))
+        self._task_active = False
+        self.refresh_mood()
 
     # -- inline bottom prompt (note / juice) -------------------------------- #
 
@@ -805,6 +1102,7 @@ class LoggingScreen(Screen):
         mode = self.cmd_mode
         value = event.value
         self.close_inline()
+        self._bump_activity()
         if mode == "note":
             if value.strip():
                 self.write_lines(self.logger.note(value))
@@ -821,15 +1119,20 @@ class LoggingScreen(Screen):
             token = parts[1].lower()
             ltype = "water" if token.startswith("w") else " ".join(parts[1:])
         self.write_lines(self.logger.append_entry(f"LIQUID: {amount} mL ({ltype})"))
+        self._flash_mood("liquid")
 
     def action_undo(self) -> None:
         removed = self.logger.undo()
         if removed:
             self.reload_log_pane()
             self.refresh_status()
-            self.app.notify(f"Undone: {' | '.join(x for x in removed if x.strip())}")
+            self.app.notify(
+                " | ".join(x for x in removed if x.strip()),
+                title="Undone",
+                severity="information",
+            )
         else:
-            self.app.notify("Nothing to undo.", severity="warning")
+            self.app.notify("Nothing to undo.", title="Undo", severity="warning")
 
     def action_set_rec(self) -> None:
         self.app.push_screen(SetRecModal(self.logger.recording_index), self._after_set_rec)
@@ -839,7 +1142,11 @@ class LoggingScreen(Screen):
             return
         self.logger.set_recording_index(value)
         self.refresh_status()
-        self.app.notify(f"Recording counter set to {self.logger.recording_index}.")
+        self.app.notify(
+            f"Recording counter set to {self.logger.recording_index}.",
+            title="Recording counter",
+            severity="information",
+        )
 
     def action_edit_metadata(self) -> None:
         self.app.push_screen(EditMetadataModal(self.logger), self._after_edit)
@@ -856,7 +1163,16 @@ class LoggingScreen(Screen):
             self.logger.rebuild_header()
             self.reload_log_pane()
             self.refresh_status()
-            self.app.notify("Session details updated.")
+            self.app.notify("Session details updated.", title="Saved", severity="information")
+
+    def action_settings(self) -> None:
+        self.app.push_screen(SettingsScreen(self.logger), self._after_settings)
+
+    def _after_settings(self, saved) -> None:
+        if saved:
+            self.refresh_hint()
+            self.refresh_status()
+            self.app.notify("Settings saved.", title="Settings", severity="information")
 
     def action_help(self) -> None:
         cfg = self.logger.config
@@ -872,6 +1188,7 @@ class LoggingScreen(Screen):
             f"  {cfg.get('undo_key', 'u')}   undo last entry (this session)",
             "  c   correct the current recording number",
             "  /   edit session details",
+            "  S   settings (defaults, options, folders)",
             f"  {cfg.get('reload_key', 'r')}   reload config",
             f"  {cfg.get('print_key', 'p')}   jump to newest / re-render",
             f"  {cfg.get('help_key', 'h')}   this help",
@@ -895,18 +1212,32 @@ class LoggingScreen(Screen):
         if decision == "nosave":
             self.logger.copy_target_root = None
             self.write_lines(self.logger.stop())
-            self._finish("Session ended — log kept in logs/ only.")
+            self._show_summary(
+                lambda: self._finish("Session ended — log kept in logs/ only.")
+            )
             return
         # decision == "save"
         self.write_lines(self.logger.stop())
-        self._do_copy(create_missing=False)
+        self._show_summary(lambda: self._do_copy(create_missing=False))
+
+    def _show_summary(self, after) -> None:
+        if self._clock_timer is not None:
+            self._clock_timer.stop()
+            self._clock_timer = None
+        summary = compute_session_summary(self.logger.entries)
+        self.app.push_screen(
+            SummaryModal(summary, self._elapsed_str(), self.logger.file_path),
+            lambda _result: after(),
+        )
 
     def _after_change_dest(self, copy_root) -> None:
         # A returned path updates the destination; skipping (None) keeps the
         # current choice — use "End without copy" to deliberately clear it.
         if copy_root:
             self.logger.copy_target_root = copy_root
-            self.app.notify(f"Copy destination set to {copy_root}")
+            self.app.notify(
+                str(copy_root), title="Copy destination set", severity="information"
+            )
         self.app.push_screen(EndSessionScreen(self.logger), self._after_end_decision)
 
     def _do_copy(self, create_missing: bool) -> None:
@@ -961,11 +1292,17 @@ class LabLogApp(App):
             self.exit(message="Startup error:\n" + traceback.format_exc())
 
     async def _startup_flow(self) -> None:
+        # First run with no saved config: open Settings as a setup wizard.
+        if not self.logger.config_loaded:
+            await self.push_screen_wait(SettingsScreen(self.logger, setup=True))
         while True:
             mode = await self.push_screen_wait(StartScreen())
             if mode in (None, "quit"):
                 self.exit()
                 return
+            if mode == "settings":
+                await self.push_screen_wait(SettingsScreen(self.logger))
+                continue
             if mode == "continue":
                 path = await self.push_screen_wait(ContinueScreen(self.logger))
                 if path is None:
@@ -977,7 +1314,7 @@ class LabLogApp(App):
                 if self.logger.resume_session(path, copy_root) is None:
                     self.notify("Could not read that log.", severity="error")
                     continue
-            else:
+            elif mode == "new":
                 data = await self.push_screen_wait(NewSessionScreen(self.logger))
                 if data is None:
                     continue
@@ -985,6 +1322,8 @@ class LabLogApp(App):
                     CopyDestScreen(self.logger, animal_hint=data.get("animal_id", ""))
                 )
                 self.logger.begin_new_session(data, copy_root)
+            else:
+                continue
             self.logging_screen.populate()
             return
 

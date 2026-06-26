@@ -7,8 +7,17 @@ from datetime import datetime
 from html import escape
 from pathlib import Path
 
+from .paths import (
+    config_file,
+    default_exports_dir,
+    default_output_dir,
+    migrate_legacy_if_needed,
+    save_config,
+)
+
 DEFAULT_CONFIG = {
     "output_dir": "logs",
+    "exports_dir": "",
     "macros": [
         {"key": "1", "label": "START RECORDING", "text": "START RECORDING"},
         {"key": "2", "label": "STOP RECORDING", "text": "STOP RECORDING"},
@@ -101,12 +110,12 @@ def normalize_config(cfg):
 
 def load_config(path: Path):
     if not path.exists():
-        return DEFAULT_CONFIG, False
+        return normalize_config({}), False
     try:
         with path.open("r", encoding="utf-8") as f:
             cfg = json.load(f)
     except Exception:
-        return DEFAULT_CONFIG, False
+        return normalize_config({}), False
 
     return normalize_config(cfg), True
 
@@ -608,7 +617,8 @@ def export_logs(config):
         print("Export cancelled.")
         return 0
 
-    export_dir = Path("exports")
+    exports_value = str(config.get("exports_dir", "") or "").strip()
+    export_dir = Path(exports_value).expanduser() if exports_value else default_exports_dir()
     export_dir.mkdir(parents=True, exist_ok=True)
     output_name = build_export_filename(monkey, project, start_date, end_date)
     output_path = export_dir / output_name
@@ -618,6 +628,51 @@ def export_logs(config):
     print(f"Created packet: {output_path}")
     print("Open the HTML file in a browser and print to PDF or paper.")
     return 0
+
+
+def compute_session_summary(entries):
+    """Tally a session's log lines into headline numbers for an end-of-day recap."""
+    import re
+
+    recordings = 0
+    liquid_ml = 0.0
+    tasks = 0
+    trials_success = 0
+    trials_fail = 0
+    notes = 0
+    known = ("LIQUID", "START TASK", "STOP TASK", "SESSION END")
+
+    for line in entries or []:
+        s = line.strip()
+        up = s.upper()
+
+        rec = re.search(r"REC (\d+) START", up)
+        if rec:
+            recordings = max(recordings, int(rec.group(1)))
+        if "LIQUID:" in up:
+            amount = re.search(r"LIQUID:\s*([0-9]+(?:\.[0-9]+)?)", up)
+            if amount:
+                liquid_ml += float(amount.group(1))
+        if "START TASK:" in up:
+            tasks += 1
+        if "STOP TASK:" in up:
+            trial = re.search(r"\[(\d+)\s*/\s*(\d+)\]", s)
+            if trial:
+                trials_success += int(trial.group(1))
+                trials_fail += int(trial.group(2))
+        if s.startswith("- ["):
+            body = s.split("] ", 1)[-1].upper()
+            if not any(body.startswith(prefix) for prefix in known):
+                notes += 1
+
+    return {
+        "recordings": recordings,
+        "liquid_ml": liquid_ml,
+        "tasks": tasks,
+        "trials_success": trials_success,
+        "trials_fail": trials_fail,
+        "notes": notes,
+    }
 
 
 class Logger:
@@ -882,6 +937,13 @@ class Logger:
     def reload_config(self):
         self.config, self.config_loaded = load_config(self.config_path)
 
+    def save_config(self, new_config=None):
+        """Persist the config (optionally replacing it first) and re-normalize."""
+        if new_config is not None:
+            self.config = normalize_config(new_config)
+        save_config(self.config_path, self.config)
+        self.config_loaded = True
+
     def next_available_path(self, path: Path) -> Path:
         """
         If path exists, append _01, _02, ... before the suffix.
@@ -1019,26 +1081,41 @@ class Logger:
         return {"status": "copied", "message": str(target_path)}
 
 
-def main():
-    config_path = Path("lablog_config.json")
-    logger = Logger(config_path)
-
-    if not logger.config_loaded:
-        logger.config = create_config_interactively(config_path)
-        logger.config_loaded = True
-
-    parser = argparse.ArgumentParser(description="SIMIA TUI logger")
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog="simia-log", description="SIMIA TUI logger")
     parser.add_argument(
         "--export",
         action="store_true",
         help="scan saved logs and generate a print-ready HTML packet",
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--config",
+        default=None,
+        help="path to a config file (overrides the default location)",
+    )
+    args = parser.parse_args(argv)
+
+    if args.config:
+        config_path = Path(args.config).expanduser()
+    else:
+        config_path = config_file()
+        note = migrate_legacy_if_needed(config_path)
+        if note:
+            print(note)
+
+    logger = Logger(config_path)
+
+    # Brand-new install (no config yet): point logs/exports at the platform
+    # data dir so the in-app setup wizard can show sensible defaults. Nothing
+    # is written until the user saves settings.
+    if not logger.config_loaded:
+        logger.config["output_dir"] = str(default_output_dir())
+        logger.config["exports_dir"] = str(default_exports_dir())
 
     if args.export:
         return export_logs(logger.config)
 
-    from tui import run_app
+    from .tui import run_app
 
     return run_app(logger)
 

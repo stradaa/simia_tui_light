@@ -1,7 +1,12 @@
 /logs
 lablog_config.json
+.venv/
+venv/
 __pycache__/
 /exports/
 /export/
 .codex
 .codex/
+/build/
+/dist/
+*.egg-info/

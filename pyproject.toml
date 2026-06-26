@@ -1,0 +1,58 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "simia-log"
+dynamic = ["version"]
+description = "A fast, keyboard-driven TUI for timestamped lab session logging."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "strada" }]
+keywords = ["tui", "textual", "logging", "neuroscience", "lab", "behavior"]
+classifiers = [
+    "Environment :: Console",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering",
+]
+dependencies = [
+    "textual>=8.2,<9",
+    "platformdirs>=4",
+]
+
+[project.scripts]
+simia-log = "simia_log.lablog:main"
+
+[project.urls]
+Homepage = "https://github.com/strada/simia_tui_light"
+Source = "https://github.com/strada/simia_tui_light"
+
+[tool.hatch.version]
+path = "src/simia_log/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/simia_log"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/simia_log", "README.md"]
+
+# --- Hatch dev environments ------------------------------------------------ #
+
+[tool.hatch.envs.default]
+description = "Run the app from a checkout."
+
+[tool.hatch.envs.default.scripts]
+app = "python -m simia_log {args}"
+export = "python -m simia_log --export {args}"
+
+[tool.hatch.envs.lint]
+description = "Formatting and linting."
+detached = true
+dependencies = ["ruff>=0.6"]
+
+[tool.hatch.envs.lint.scripts]
+check = "ruff check src {args}"
+fmt = "ruff format src {args}"

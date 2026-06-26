@@ -22,6 +22,13 @@ Screen {
     color: $text-muted;
 }
 
+/* the little monkey's one-line mood, just under the status bar */
+#moodbar {
+    height: 1;
+    padding: 0 1;
+    color: $text-muted;
+}
+
 #log {
     padding: 0 1;
     scrollbar-size-vertical: 1;
@@ -65,6 +72,9 @@ ModalScreen {
     padding: 0 1;
     border: round $primary;
     background: $surface;
+    border-title-color: $primary;
+    border-title-align: center;
+    border-title-style: bold;
 }
 
 .dialog.wide {
@@ -93,6 +103,32 @@ ModalScreen {
 .dialog-title {
     text-style: bold;
     color: $primary;
+}
+
+.dialog-body {
+    padding: 1 0;
+    color: $text;
+}
+
+.summary-row {
+    height: 1;
+}
+
+.summary-label {
+    width: 22;
+    color: $text-muted;
+}
+
+.summary-value {
+    width: 1fr;
+    color: $text;
+}
+
+.summary-face {
+    height: auto;
+    content-align: center middle;
+    color: $accent;
+    padding: 0 0 1 0;
 }
 
 .banner {
@@ -134,6 +170,16 @@ Input {
 }
 
 Input:focus {
+    border: none;
+}
+
+TextArea {
+    border: none;
+    height: 5;
+    background: $panel;
+}
+
+TextArea:focus {
     border: none;
 }
 
