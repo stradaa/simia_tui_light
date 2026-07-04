@@ -82,6 +82,11 @@ automatically. **On first run** the app opens a short setup wizard — pick your
 behaviorists, animals, project, and where logs should live. Nothing to edit by
 hand.
 
+Running [Thalamus](https://github.com/pesaranlab/thalamus) on the rig? Install
+with the extra — `pipx install ".[thalamus]"` — and recording start/stop and
+trial tallies are logged automatically. See
+[Thalamus integration](#thalamus-integration-optional).
+
 > Already using the old `python lablog.py` layout? On first launch from your
 > existing folder, the app imports your `lablog_config.json` and **keeps using
 > your current `logs/` directory in place** — your logs are never moved or
@@ -301,6 +306,7 @@ If you'd rather edit the JSON directly, every setting maps to a key below.
 | `tasks` | Task names offered when you start a task |
 | `note_key`, `liquid_key`, `mark_key`, `undo_key`, `reload_key`, `print_key`, `stop_key`, `help_key` | Single-letter hotkeys |
 | `timestamp_format`, `line_time_format` | strftime patterns for headers and event lines |
+| `thalamus` | Live [Thalamus integration](#thalamus-integration-optional) (`enabled`, `host`, ports, `storage_node`, `subject_regex`) |
 
 <details>
 <summary>Full example config</summary>
@@ -353,8 +359,57 @@ If you'd rather edit the JSON directly, every setting maps to a key below.
   "stop_key": "q",
   "help_key": "h",
   "timestamp_format": "%Y-%m-%d %H:%M:%S",
-  "line_time_format": "%H:%M:%S"
+  "line_time_format": "%H:%M:%S",
+  "thalamus": {
+    "enabled": true,
+    "host": "localhost",
+    "cpp_port": 50050,
+    "state_port": 50051,
+    "storage_node": "Storage",
+    "subject_regex": "(?P<subject>[^_/]+)_Behavior_(?P<rig>[^_/]+)"
+  }
 }
 ```
 
 </details>
+
+## Thalamus integration (optional)
+
+Install with the `thalamus` extra to let a running
+[Thalamus](https://github.com/pesaranlab/thalamus) session drive the log for
+you:
+
+```bash
+pipx install ".[thalamus]"      # or: pip install -e ".[thalamus]"
+```
+
+Start your session as usual — when the extra is installed and
+`thalamus.enabled` is true, the app connects to the local Thalamus session in
+the background (a `⚡ thalamus` indicator appears in the status bar) and:
+
+- **Recording start/stop is automatic.** When the Storage node starts or
+  stops recording, the matching `>>> REC N START >>>` / `<<< REC N STOP <<<`
+  lines are written for you — no keypress needed. The `1`/`2` macros still
+  work as a manual fallback (avoid mixing both for the same recording, or
+  fix the counter with `c`).
+- **Trial results are tallied, not spammed.** Each finished trial's
+  success/fail outcome is counted in memory, and when the recording stops one
+  `STOP TASK: <name> [success/fail]` line is written per task that ran. The
+  log stays lightweight — no per-trial entries.
+- **The new-session form is prefilled.** The animal name is derived from the
+  Storage node's output path (e.g. `Eevee_Behavior_AlexRig` → `Eevee`,
+  tunable via `subject_regex`) as an editable default.
+
+Everything else stays manual and human-first: you still open the session,
+confirm metadata, take notes (`n`), log juice (`l`), and end the session
+(`q`). If Thalamus is not running, the app behaves exactly like the base
+install and reconnects automatically when it comes back.
+
+Config keys (`thalamus` block): `enabled`, `host`, `cpp_port` (native server
+publishing trial results, default 50050), `state_port` (state server
+publishing recording start/stop, default 50051), `storage_node` (name of the
+STORAGE node to watch, default `Storage`), `subject_regex` (named groups
+`subject`/`rig` matched against the output path).
+
+Without the extra installed, the base app never imports gRPC and none of
+this runs.

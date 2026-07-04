@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "grpcio-tools>=1.60"]
 build-backend = "hatchling.build"
 
 [project]
@@ -23,6 +23,13 @@ dependencies = [
     "platformdirs>=4",
 ]
 
+[project.optional-dependencies]
+thalamus = [
+    "grpcio>=1.60",
+    "grpcio-tools>=1.60",
+    "protobuf>=4.25",
+]
+
 [project.scripts]
 simia-log = "simia_log.lablog:main"
 
@@ -35,9 +42,13 @@ path = "src/simia_log/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/simia_log"]
+artifacts = ["src/simia_log/thalamus_ext/_gen/"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/simia_log", "README.md"]
+include = ["src/simia_log", "README.md", "hatch_build.py"]
+
+[tool.hatch.build.hooks.custom]
+path = "hatch_build.py"
 
 # --- Hatch dev environments ------------------------------------------------ #
 

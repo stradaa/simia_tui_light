@@ -55,6 +55,17 @@ DEFAULT_CONFIG = {
     "help_key": "h",
     "timestamp_format": "%Y-%m-%d %H:%M:%S",
     "line_time_format": "%H:%M:%S",
+    # Optional live Thalamus integration (requires `pip install simia-log[thalamus]`).
+    # When the extra is installed and enabled, recording start/stop and per-task
+    # trial tallies are written automatically from the running Thalamus session.
+    "thalamus": {
+        "enabled": True,
+        "host": "localhost",
+        "cpp_port": 50050,
+        "state_port": 50051,
+        "storage_node": "Storage",
+        "subject_regex": "(?P<subject>[^_/]+)_Behavior_(?P<rig>[^_/]+)",
+    },
 }
 
 IS_WINDOWS = os.name == "nt"
@@ -105,6 +116,12 @@ def normalize_config(cfg):
         copy_targets.insert(0, {"label": "Configured copy folder", "path": old_copy_dir})
 
     merged["copy_on_stop_targets"] = copy_targets
+
+    thalamus_cfg = DEFAULT_CONFIG["thalamus"].copy()
+    cfg_thalamus = cfg.get("thalamus", {})
+    if isinstance(cfg_thalamus, dict):
+        thalamus_cfg.update(cfg_thalamus)
+    merged["thalamus"] = thalamus_cfg
     return merged
 
 

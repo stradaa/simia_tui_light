@@ -10,3 +10,6 @@ __pycache__/
 /build/
 /dist/
 *.egg-info/
+
+# generated gRPC stubs (compiled from vendored .proto at build/run time)
+src/simia_log/thalamus_ext/_gen/

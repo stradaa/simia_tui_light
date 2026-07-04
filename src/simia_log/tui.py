@@ -35,6 +35,7 @@ from textual.widgets import (
 )
 from textual.widgets.option_list import Option
 
+from . import thalamus_ext
 from .lablog import compute_session_summary, parse_log_file
 
 try:
@@ -245,9 +246,10 @@ class NewSessionScreen(ModalScreen):
 
     BINDINGS = [Binding("escape", "cancel", "Back")]
 
-    def __init__(self, logger):
+    def __init__(self, logger, prefill=None):
         super().__init__()
         self.logger = logger
+        self.prefill = prefill or {}
         self._fields = logger.get_session_fields()
 
     def compose(self) -> ComposeResult:
@@ -256,7 +258,7 @@ class NewSessionScreen(ModalScreen):
                 for field in self._fields:
                     fid = field["id"]
                     options = self.logger.get_field_options(fid)
-                    default = self.logger.get_field_default(fid)
+                    default = self.prefill.get(fid) or self.logger.get_field_default(fid)
                     yield Label(field["label"], classes="field-label")
                     if options:
                         opts = select_options(options, default)
@@ -844,6 +846,8 @@ class LoggingScreen(Screen):
         self._last_activity = 0.0
         self._flash_key = None
         self._flash_until = 0.0
+        # None = Thalamus integration inactive; True/False = live link state.
+        self._thalamus_connected = None
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -892,11 +896,18 @@ class LoggingScreen(Screen):
         fname = lg.file_path.name if lg.file_path else "—"
         elapsed = self._elapsed_str()
         clock = f"⏱ [b]{elapsed}[/]   " if elapsed else ""
+        if self._thalamus_connected is None:
+            link = ""
+        elif self._thalamus_connected:
+            link = f"[{RP['foam']}]⚡ thalamus[/]   "
+        else:
+            link = f"[{RP['love']}]⚡ thalamus offline[/]   "
         text = (
             f"[b]{escape(monkey)}[/]   "
             f"REC [b]{lg.recording_index}[/]   "
             f"task [b]{escape(task)}[/]   "
             f"{clock}"
+            f"{link}"
             f"[dim]{escape(fname)}[/]"
         )
         self.query_one("#statusbar", Static).update(text)
@@ -1073,6 +1084,44 @@ class LoggingScreen(Screen):
             self.write_lines(self.logger.append_entry(f"STOP TASK: {label}"))
         self._task_active = False
         self.refresh_mood()
+
+    # -- thalamus listener callbacks (run on the app's event loop) ---------- #
+
+    def thalamus_recording_start(self, info) -> None:
+        if not self.logger.session_started:
+            self.app.notify(
+                "Thalamus recording started (no active session — not logged).",
+                title="Thalamus",
+                severity="warning",
+            )
+            return
+        self.write_lines(self.logger.append_entry("START RECORDING"))
+        self._recording_active = True
+        self._flash_mood("rec_start")
+        self.refresh_status()
+        self.refresh_mood()
+
+    def thalamus_recording_stop(self, tally) -> None:
+        if not self.logger.session_started:
+            return
+        for task, (ok, fail) in tally.items():
+            self.write_lines(self.logger.append_entry(f"STOP TASK: {task} [{ok}/{fail}]"))
+        self.write_lines(self.logger.append_entry("STOP RECORDING"))
+        self._recording_active = False
+        self._flash_mood("rec_stop")
+        self.refresh_status()
+        self.refresh_mood()
+
+    def thalamus_connection(self, connected: bool) -> None:
+        previous = self._thalamus_connected
+        self._thalamus_connected = connected
+        self.refresh_status()
+        if previous is not None and previous != connected:
+            self.app.notify(
+                "Connected." if connected else "Connection lost — reconnecting…",
+                title="Thalamus",
+                severity="information" if connected else "warning",
+            )
 
     # -- inline bottom prompt (note / juice) -------------------------------- #
 
@@ -1315,7 +1364,10 @@ class LabLogApp(App):
                     self.notify("Could not read that log.", severity="error")
                     continue
             elif mode == "new":
-                data = await self.push_screen_wait(NewSessionScreen(self.logger))
+                prefill = await self._thalamus_prefill()
+                data = await self.push_screen_wait(
+                    NewSessionScreen(self.logger, prefill=prefill)
+                )
                 if data is None:
                     continue
                 copy_root = await self.push_screen_wait(
@@ -1325,6 +1377,7 @@ class LabLogApp(App):
             else:
                 continue
             self.logging_screen.populate()
+            self._start_thalamus()
             return
 
     @staticmethod
@@ -1333,6 +1386,45 @@ class LabLogApp(App):
         if session:
             return session["header"].get("Simia (monkey)", "")
         return ""
+
+    # -- thalamus integration (optional, requires the [thalamus] extra) ------ #
+
+    def _thalamus_config(self):
+        cfg = self.logger.config.get("thalamus", {})
+        if not isinstance(cfg, dict) or not cfg.get("enabled", False):
+            return None
+        if not thalamus_ext.is_available():
+            return None
+        return cfg
+
+    async def _thalamus_prefill(self) -> dict:
+        """Editable defaults for the new-session form, from the live Storage node."""
+        cfg = self._thalamus_config()
+        if cfg is None:
+            return {}
+        hints = await thalamus_ext.fetch_session_hints(cfg, timeout=2.0)
+        if not hints or not hints.get("subject"):
+            return {}
+        return {"animal_id": hints["subject"]}
+
+    def _start_thalamus(self) -> None:
+        if self._thalamus_config() is not None:
+            self.run_thalamus_listener()
+
+    @work(exclusive=True, group="thalamus")
+    async def run_thalamus_listener(self) -> None:
+        cfg = self._thalamus_config()
+        if cfg is None:
+            return
+        screen = self.logging_screen
+        screen.thalamus_connection(False)
+        listener = thalamus_ext.ThalamusListener(
+            cfg,
+            on_recording_start=screen.thalamus_recording_start,
+            on_recording_stop=screen.thalamus_recording_stop,
+            on_connection_change=screen.thalamus_connection,
+        )
+        await listener.run()
 
 
 def run_app(logger) -> int:
