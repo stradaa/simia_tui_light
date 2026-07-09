@@ -9,6 +9,7 @@ work), a startup wizard (new session or continue an existing log), and a way to
 correct the current recording number.
 """
 
+import statistics
 import time
 from pathlib import Path
 
@@ -31,6 +32,7 @@ from textual.widgets import (
     RichLog,
     Select,
     Static,
+    Switch,
     TextArea,
 )
 from textual.widgets.option_list import Option
@@ -554,6 +556,15 @@ class SettingsScreen(ModalScreen[bool]):
                     classes="field-label",
                 )
                 yield TextArea(self._targets_text(), id="copy_targets")
+
+                th = cfg.get("thalamus", {}) if isinstance(cfg.get("thalamus"), dict) else {}
+                yield Label("Thalamus — auto-log task params (PARAMS line)", classes="field-label")
+                yield Switch(value=bool(th.get("auto_log_params", True)), id="th_auto_log_params")
+                yield Label("Thalamus — re-log params when a value changes", classes="field-label")
+                yield Switch(
+                    value=bool(th.get("log_params_on_change", False)),
+                    id="th_log_params_on_change",
+                )
             with Horizontal(classes="buttons"):
                 yield Button("Save", variant="primary", id="save")
                 yield Button("Cancel", id="cancel")
@@ -594,6 +605,11 @@ class SettingsScreen(ModalScreen[bool]):
         cfg["copy_on_stop_targets"] = self._parse_targets(
             self.query_one("#copy_targets", TextArea).text
         )
+        cfg.setdefault("thalamus", {})
+        cfg["thalamus"]["auto_log_params"] = self.query_one("#th_auto_log_params", Switch).value
+        cfg["thalamus"]["log_params_on_change"] = self.query_one(
+            "#th_log_params_on_change", Switch
+        ).value
         self.logger.save_config(cfg)
         self.dismiss(True)
 
@@ -719,6 +735,64 @@ class EditMetadataModal(ModalScreen):
             else:
                 result[fid] = widget.value.strip()
         self.dismiss(result)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class EditEntryModal(ModalScreen):
+    """Pick a logged event line and rewrite its text in place.
+
+    Only ``- [ts] …`` entries are offered (see ``Logger.editable_entries``);
+    the timestamp prefix is kept and just the body is edited. Dismisses with
+    ``(index, new_body)`` on save, or None on cancel.
+    """
+
+    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+
+    def __init__(self, logger):
+        super().__init__()
+        self.logger = logger
+        self._entries = logger.editable_entries()  # [(index, line)]
+
+    @staticmethod
+    def _body(line: str) -> str:
+        return line.split("] ", 1)[1] if "] " in line else line
+
+    def compose(self) -> ComposeResult:
+        with dialog("Edit an entry", "dialog wide tall"):
+            if not self._entries:
+                yield Static("No editable entries yet.", classes="hint")
+                with Horizontal(classes="buttons"):
+                    yield Button("Close", id="cancel")
+                return
+            last_index, last_line = self._entries[-1]
+            yield Label("Entry (newest last)", classes="field-label")
+            options = [(escape(line), idx) for idx, line in self._entries]
+            yield Select(options, value=last_index, allow_blank=False, id="entry")
+            yield Label("New text", classes="field-label")
+            yield Input(value=self._body(last_line), id="body")
+            with Horizontal(classes="buttons"):
+                yield Button("Save", variant="primary", id="save")
+                yield Button("Cancel", id="cancel")
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.id != "entry" or event.value is Select.BLANK:
+            return
+        for idx, line in self._entries:
+            if idx == event.value:
+                self.query_one("#body", Input).value = self._body(line)
+                break
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id != "save" or not self._entries:
+            self.dismiss(None)
+            return
+        index = self.query_one("#entry", Select).value
+        if index is None or index is Select.BLANK:
+            self.dismiss(None)
+            return
+        self.dismiss((index, self.query_one("#body", Input).value))
 
     def action_cancel(self) -> None:
         self.dismiss(None)
@@ -1029,6 +1103,8 @@ class LoggingScreen(Screen):
             self.action_set_rec()
         elif ch == "/":
             self.action_edit_metadata()
+        elif ch == cfg.get("edit_key", "e"):
+            self.action_edit_entry()
         elif ch == "S":
             self.action_settings()
         elif ch == cfg.get("help_key", "h"):
@@ -1101,16 +1177,69 @@ class LoggingScreen(Screen):
         self.refresh_status()
         self.refresh_mood()
 
-    def thalamus_recording_stop(self, tally) -> None:
+    def thalamus_recording_stop(self, stats) -> None:
         if not self.logger.session_started:
             return
-        for task, (ok, fail) in tally.items():
-            self.write_lines(self.logger.append_entry(f"STOP TASK: {task} [{ok}/{fail}]"))
+        for task, s in stats.items():
+            # Tolerate the legacy (ok, fail) tuple shape as well as the dict.
+            if isinstance(s, (tuple, list)):
+                ok, fail, moves = s[0], s[1], []
+            else:
+                ok, fail, moves = s.get("ok", 0), s.get("fail", 0), s.get("move_times") or []
+            line = f"STOP TASK: {task} [{ok}/{fail}]"
+            total = ok + fail
+            if total:
+                line += f" · {round(100 * ok / total)}%"
+            if moves:
+                line += f" · move {statistics.median(moves):.2f}s med"
+            self.write_lines(self.logger.append_entry(line))
         self.write_lines(self.logger.append_entry("STOP RECORDING"))
         self._recording_active = False
         self._flash_mood("rec_stop")
         self.refresh_status()
         self.refresh_mood()
+
+    def thalamus_params(self, task, params, is_change) -> None:
+        if not self.logger.session_started:
+            return
+        cfg = self.logger.config.get("thalamus", {})
+        if not isinstance(cfg, dict) or not cfg.get("auto_log_params", True):
+            return
+        if is_change and not cfg.get("log_params_on_change", False):
+            return
+        self.write_lines(self.logger.append_entry(self._format_params(task, params)))
+        self.refresh_status()
+
+    @staticmethod
+    def _format_params(task, params) -> str:
+        """One concise, human-readable PARAMS line; missing fields are omitted."""
+        def num(value):
+            return f"{value:g}" if isinstance(value, (int, float)) else None
+
+        parts = []
+        radius = num(params.get("radius"))
+        if radius is not None:
+            parts.append(f"radius {radius}")
+        hold = num(params.get("hold"))
+        if hold is not None:
+            parts.append(f"hold {hold}s")
+        reward_bits = []
+        if isinstance(params.get("reward_channel"), (int, float)):
+            reward_bits.append(f"ch{int(params['reward_channel'])}")
+        scale = num(params.get("reward_scale"))
+        if scale is not None:
+            reward_bits.append(f"×{scale}")
+        ms = num(params.get("reward_ms"))
+        if ms is not None:
+            reward_bits.append(f"({ms}ms)")
+        if reward_bits:
+            parts.append("reward " + " ".join(reward_bits))
+        if params.get("control_mode"):
+            parts.append(f"mode {params['control_mode']}")
+        if isinstance(params.get("goal"), (int, float)):
+            parts.append(f"goal {int(params['goal'])}")
+        body = " · ".join(parts)
+        return f"PARAMS: {task} · {body}" if body else f"PARAMS: {task}"
 
     def thalamus_connection(self, connected: bool) -> None:
         previous = self._thalamus_connected
@@ -1214,6 +1343,20 @@ class LoggingScreen(Screen):
             self.refresh_status()
             self.app.notify("Session details updated.", title="Saved", severity="information")
 
+    def action_edit_entry(self) -> None:
+        self.app.push_screen(EditEntryModal(self.logger), self._after_edit_entry)
+
+    def _after_edit_entry(self, result) -> None:
+        if not result:
+            return
+        index, body = result
+        if self.logger.replace_entry(index, body) is None:
+            self.app.notify("Could not edit that line.", title="Edit", severity="warning")
+            return
+        self.reload_log_pane()
+        self.refresh_status()
+        self.app.notify("Entry updated.", title="Edit", severity="information")
+
     def action_settings(self) -> None:
         self.app.push_screen(SettingsScreen(self.logger), self._after_settings)
 
@@ -1237,6 +1380,7 @@ class LoggingScreen(Screen):
             f"  {cfg.get('undo_key', 'u')}   undo last entry (this session)",
             "  c   correct the current recording number",
             "  /   edit session details",
+            f"  {cfg.get('edit_key', 'e')}   edit a logged entry",
             "  S   settings (defaults, options, folders)",
             f"  {cfg.get('reload_key', 'r')}   reload config",
             f"  {cfg.get('print_key', 'p')}   jump to newest / re-render",
@@ -1423,6 +1567,7 @@ class LabLogApp(App):
             on_recording_start=screen.thalamus_recording_start,
             on_recording_stop=screen.thalamus_recording_stop,
             on_connection_change=screen.thalamus_connection,
+            on_params=screen.thalamus_params,
         )
         await listener.run()
 

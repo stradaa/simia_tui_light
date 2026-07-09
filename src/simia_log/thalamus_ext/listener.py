@@ -29,6 +29,10 @@ LOGGER = logging.getLogger(__name__)
 RECONNECT_MIN_S = 1.0
 RECONNECT_MAX_S = 30.0
 
+# Cap on movement-latency samples kept per task per recording (median only
+# needs a representative sample; this bounds memory on very long recordings).
+MAX_MOVE_TIMES = 5000
+
 
 async def _silence():
     """Request iterator for observable_bridge_v2 that never sends anything."""
@@ -43,6 +47,7 @@ class ThalamusListener:
         on_recording_start=None,
         on_recording_stop=None,
         on_connection_change=None,
+        on_params=None,
     ):
         cfg = config or {}
         self.host = cfg.get("host", "localhost")
@@ -54,11 +59,13 @@ class ThalamusListener:
         self.on_recording_start = on_recording_start
         self.on_recording_stop = on_recording_stop
         self.on_connection_change = on_connection_change
+        self.on_params = on_params
 
         self.recording = False
         self.storage_info = {}  # output_file, rec, subject, rig
         self._storage_index = None
-        self._tally = {}  # task name -> [success, fail]
+        # task name -> {ok, fail, move_times: [float], params: dict|None, reported: bool}
+        self._tally = {}
         self._connected = {"state": False, "trials": False}
 
     # -- public API ---------------------------------------------------------- #
@@ -75,7 +82,15 @@ class ThalamusListener:
         return all(self._connected.values())
 
     def tally_snapshot(self):
-        return {task: tuple(counts) for task, counts in self._tally.items()}
+        """Just the {task: (ok, fail)} counts (used for status / round-trip)."""
+        return {task: (s["ok"], s["fail"]) for task, s in self._tally.items()}
+
+    def stats_snapshot(self):
+        """The richer per-task accumulator delivered on recording stop."""
+        return {
+            task: {"ok": s["ok"], "fail": s["fail"], "move_times": list(s["move_times"])}
+            for task, s in self._tally.items()
+        }
 
     # -- connection management ------------------------------------------------ #
 
@@ -187,10 +202,10 @@ class ThalamusListener:
             if self.on_recording_start:
                 self.on_recording_start(dict(self.storage_info))
         else:
-            tally = self.tally_snapshot()
+            stats = self.stats_snapshot()
             self._tally = {}
             if self.on_recording_stop:
-                self.on_recording_stop(tally)
+                self.on_recording_stop(stats)
 
     # -- trial watcher --------------------------------------------------------- #
 
@@ -206,8 +221,36 @@ class ThalamusListener:
     def _record_outcome(self, outcome):
         if outcome is None or not self.recording:
             return
-        counts = self._tally.setdefault(outcome.task, [0, 0])
-        counts[0 if outcome.success else 1] += 1
+        stats = self._tally.setdefault(
+            outcome.task,
+            {"ok": 0, "fail": 0, "move_times": [], "params": None, "reported": False},
+        )
+        stats["ok" if outcome.success else "fail"] += 1
+        if outcome.move_time_s is not None and len(stats["move_times"]) < MAX_MOVE_TIMES:
+            stats["move_times"].append(outcome.move_time_s)
+        self._track_params(outcome, stats)
+
+    def _track_params(self, outcome, stats):
+        """Fire on_params on the first meaningful trial and on any later change.
+
+        ``is_change`` is False for the initial snapshot of a recording, True
+        when a value (radius/hold/reward/goal/mode) later differs — so the UI
+        can gate mid-recording re-emits behind an opt-in setting.
+        """
+        params = outcome.params()
+        if not any(v is not None for v in params.values()):
+            return  # nothing worth logging (e.g. a non-Rust task with no config)
+        if not stats["reported"]:
+            stats["params"] = params
+            stats["reported"] = True
+            is_change = False
+        elif params != stats["params"]:
+            stats["params"] = params
+            is_change = True
+        else:
+            return
+        if self.on_params:
+            self.on_params(outcome.task, dict(params), is_change)
 
 
 async def fetch_session_hints(config, timeout=3.0):

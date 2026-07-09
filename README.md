@@ -173,6 +173,7 @@ it before copying.
 | `u` | undo the last entry *(this session only)* |
 | `c` | correct the current recording number after a misclick |
 | `/` | edit session details — all header fields in one form |
+| `e` | edit a logged entry — pick any event line and rewrite its text in place |
 | `S` | open Settings (defaults, dropdown choices, folders) — capital `S` so it's hard to hit by accident |
 | `r` | reload config |
 | `p` | jump to newest / re-render the pane |
@@ -304,9 +305,9 @@ If you'd rather edit the JSON directly, every setting maps to a key below.
 | `field_defaults` | Pre-filled values in the new-session form |
 | `copy_on_stop_targets` | Shared-drive folders to copy the log into at session end |
 | `tasks` | Task names offered when you start a task |
-| `note_key`, `liquid_key`, `mark_key`, `undo_key`, `reload_key`, `print_key`, `stop_key`, `help_key` | Single-letter hotkeys |
+| `note_key`, `liquid_key`, `mark_key`, `undo_key`, `edit_key`, `reload_key`, `print_key`, `stop_key`, `help_key` | Single-letter hotkeys |
 | `timestamp_format`, `line_time_format` | strftime patterns for headers and event lines |
-| `thalamus` | Live [Thalamus integration](#thalamus-integration-optional) (`enabled`, `host`, ports, `storage_node`, `subject_regex`) |
+| `thalamus` | Live [Thalamus integration](#thalamus-integration-optional) (`enabled`, `host`, ports, `storage_node`, `subject_regex`, `auto_log_params`, `log_params_on_change`) |
 
 <details>
 <summary>Full example config</summary>
@@ -358,6 +359,7 @@ If you'd rather edit the JSON directly, every setting maps to a key below.
   "print_key": "p",
   "stop_key": "q",
   "help_key": "h",
+  "edit_key": "e",
   "timestamp_format": "%Y-%m-%d %H:%M:%S",
   "line_time_format": "%H:%M:%S",
   "thalamus": {
@@ -366,7 +368,9 @@ If you'd rather edit the JSON directly, every setting maps to a key below.
     "cpp_port": 50050,
     "state_port": 50051,
     "storage_node": "Storage",
-    "subject_regex": "(?P<subject>[^_/]+)_Behavior_(?P<rig>[^_/]+)"
+    "subject_regex": "(?P<subject>[^_/]+)_Behavior_(?P<rig>[^_/]+)",
+    "auto_log_params": true,
+    "log_params_on_change": false
   }
 }
 ```
@@ -394,8 +398,19 @@ the background (a `⚡ thalamus` indicator appears in the status bar) and:
   fix the counter with `c`).
 - **Trial results are tallied, not spammed.** Each finished trial's
   success/fail outcome is counted in memory, and when the recording stops one
-  `STOP TASK: <name> [success/fail]` line is written per task that ran. The
-  log stays lightweight — no per-trial entries.
+  `STOP TASK: <name> [success/fail] · <pct>% · move <t>s med` line is written
+  per task that ran — the raw counts plus success rate and the median
+  first-movement latency (the latency part is added only when the task reports
+  it, e.g. the Rust joystick task). The log stays lightweight — no per-trial
+  entries.
+- **Task parameters are captured.** On the first trial of each recording a
+  single `PARAMS: <name> · radius … · hold …s · reward ch… ×… (…ms) · goal …`
+  line records the difficulty settings that were actually in force (drawn from
+  the trial's `used_values` / `task_config` / `behav_result`), so you no longer
+  hand-type them. Toggle it with **auto-log task params** in Settings; enable
+  **re-log params when a value changes** to also drop a fresh line whenever a
+  value shifts mid-recording. Like any note, a PARAMS line can be corrected
+  with `e`.
 - **The new-session form is prefilled.** The animal name is derived from the
   Storage node's output path (e.g. `Eevee_Behavior_AlexRig` → `Eevee`,
   tunable via `subject_regex`) as an editable default.
@@ -409,7 +424,10 @@ Config keys (`thalamus` block): `enabled`, `host`, `cpp_port` (native server
 publishing trial results, default 50050), `state_port` (state server
 publishing recording start/stop, default 50051), `storage_node` (name of the
 STORAGE node to watch, default `Storage`), `subject_regex` (named groups
-`subject`/`rig` matched against the output path).
+`subject`/`rig` matched against the output path), `auto_log_params` (write the
+`PARAMS:` line on the first trial of each recording, default true), and
+`log_params_on_change` (also re-log it when a value changes mid-recording,
+default false).
 
 Without the extra installed, the base app never imports gRPC and none of
 this runs.

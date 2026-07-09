@@ -18,18 +18,31 @@ from simia_log.thalamus_ext.parsing import (
     parse_trial_text,
 )
 
-# Shape captured from a live session (thalamus TaskContext.run trial_summ).
+# Shape captured from a live session (thalamus TaskContext.run trial_summ),
+# with the Rust joystick behav_result (final_attempt keys are flattened in;
+# see rust/joystick_task/src/events.rs).
 TRIAL_JSON = json.dumps(
     {
-        "used_values": {"reward": 50.0},
+        "used_values": {"reward": 450.0},
         "task_config": {
             "task_type": "joystick_intro_rust",
             "name": "Grid (Rust) - test",
             "task_cluster_name": "Joy",
             "goal": 96,
+            "reward_scale": 0.75,
         },
         "task_result": {"success": True, "done": True},
-        "behav_result": {"final_outcome": "success", "joystick_samples": [0] * 100},
+        "behav_result": {
+            "control_mode": "direct",
+            "final_outcome": "success",
+            "final_attempt": {
+                "target_radius_ratio": 0.13,
+                "hold_time_s": 0.2,
+                "reward_channel": 2,
+                "first_movement_time_s": 0.41,
+            },
+            "joystick_samples": [0] * 100,
+        },
     }
 )
 
@@ -39,11 +52,44 @@ def test_parse_trial_text():
     assert outcome is not None
     assert outcome.task == "Grid (Rust) - test"
     assert outcome.success is True
+    # Enriched fields extracted from used_values / task_config / behav_result.
+    assert outcome.radius == 0.13
+    assert outcome.hold == 0.2
+    assert outcome.reward_ms == 450.0
+    assert outcome.reward_channel == 2
+    assert outcome.reward_scale == 0.75
+    assert outcome.goal == 96
+    assert outcome.control_mode == "direct"
+    assert outcome.final_outcome == "success"
+    assert outcome.move_time_s == 0.41
+    assert outcome.params()["radius"] == 0.13
 
     fail = parse_trial_text(
         json.dumps({"task_config": {"name": "X"}, "task_result": {"success": False}})
     )
     assert fail.success is False
+    # No behav_result / used_values → every enriched field degrades to None.
+    assert fail.radius is None
+    assert fail.move_time_s is None
+    assert all(v is None for v in fail.params().values())
+
+    # Falls back to the last of behav_result.attempts when final_attempt absent.
+    from_attempts = parse_trial_text(
+        json.dumps(
+            {
+                "task_config": {"name": "X"},
+                "task_result": {"success": True},
+                "behav_result": {
+                    "attempts": [
+                        {"target_radius_ratio": 0.2},
+                        {"target_radius_ratio": 0.12, "hold_time_s": 0.3},
+                    ]
+                },
+            }
+        )
+    )
+    assert from_attempts.radius == 0.12
+    assert from_attempts.hold == 0.3
 
     # Non-trial log lines are ignored.
     assert parse_trial_text("BehavState=success") is None
@@ -84,10 +130,12 @@ def test_listener_recording_state_machine():
     from simia_log.thalamus_ext.parsing import parse_trial_text as parse
 
     events = []
+    params = []
     listener = ThalamusListener(
         {"storage_node": "Storage"},
         on_recording_start=lambda info: events.append(("start", info)),
-        on_recording_stop=lambda tally: events.append(("stop", tally)),
+        on_recording_stop=lambda stats: events.append(("stop", stats)),
+        on_params=lambda task, p, is_change: params.append((task, p, is_change)),
     )
     snapshot = json.dumps(
         {
@@ -127,10 +175,26 @@ def test_listener_recording_state_machine():
     )
     assert listener.tally_snapshot() == {"Grid (Rust) - test": (3, 1)}
 
-    # Recording stops: tally is delivered and cleared.
+    # Params fire once (initial snapshot) since all three trials share values.
+    assert len(params) == 1
+    assert params[0][2] is False  # is_change
+    assert params[0][1]["radius"] == 0.13
+
+    # A trial with a changed radius fires on_params again, flagged as a change.
+    changed = json.loads(TRIAL_JSON)
+    changed["behav_result"]["final_attempt"]["target_radius_ratio"] = 0.12
+    listener._record_outcome(parse(json.dumps(changed)))
+    assert len(params) == 2
+    assert params[1][2] is True
+    assert params[1][1]["radius"] == 0.12
+
+    # Recording stops: richer per-task stats are delivered and cleared.
     listener._apply_delta("['nodes'][1]['Running']", "false")
     assert [e[0] for e in events] == ["start", "stop"]
-    assert events[1][1] == {"Grid (Rust) - test": (3, 1)}
+    stats = events[1][1]["Grid (Rust) - test"]
+    assert (stats["ok"], stats["fail"]) == (4, 1)
+    # Movement times captured only from the successful behav_result trials.
+    assert stats["move_times"] == [0.41, 0.41, 0.41, 0.41]
     assert listener.tally_snapshot() == {}
 
 

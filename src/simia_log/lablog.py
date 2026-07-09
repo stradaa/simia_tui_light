@@ -53,6 +53,7 @@ DEFAULT_CONFIG = {
     "print_key": "p",
     "stop_key": "q",
     "help_key": "h",
+    "edit_key": "e",
     "timestamp_format": "%Y-%m-%d %H:%M:%S",
     "line_time_format": "%H:%M:%S",
     # Optional live Thalamus integration (requires `pip install simia-log[thalamus]`).
@@ -65,6 +66,11 @@ DEFAULT_CONFIG = {
         "state_port": 50051,
         "storage_node": "Storage",
         "subject_regex": "(?P<subject>[^_/]+)_Behavior_(?P<rig>[^_/]+)",
+        # Auto-log a one-line PARAMS: snapshot (radius/hold/reward/goal) on the
+        # first trial of each recording, and re-emit it mid-recording only when
+        # a value changes (opt-in — can get chatty on a sampled schedule).
+        "auto_log_params": True,
+        "log_params_on_change": False,
     },
 }
 
@@ -657,7 +663,7 @@ def compute_session_summary(entries):
     trials_success = 0
     trials_fail = 0
     notes = 0
-    known = ("LIQUID", "START TASK", "STOP TASK", "SESSION END")
+    known = ("LIQUID", "START TASK", "STOP TASK", "SESSION END", "PARAMS")
 
     for line in entries or []:
         s = line.strip()
@@ -945,6 +951,36 @@ class Logger:
             self.write_all()
             return removed
         return None
+
+    def editable_entries(self):
+        """(index, line) for user-editable event lines — the ``- [ts] …`` form.
+
+        Standalone markers (REC START/STOP, ``---``) and header lines are
+        excluded, so an in-place edit never disturbs a padded sentinel or the
+        undo line-count bookkeeping.
+        """
+        return [(i, line) for i, line in enumerate(self.entries) if line.startswith("- [")]
+
+    def replace_entry(self, index, new_body):
+        """Rewrite the text body of one ``- [ts] …`` entry in place.
+
+        The timestamp prefix and single-line shape are preserved (so ``undo``'s
+        ``event_line_counts`` stays valid), then the file is rewritten. Returns
+        the new line, or None if ``index`` is not an editable entry / body empty.
+        """
+        if not (0 <= index < len(self.entries)):
+            return None
+        line = self.entries[index]
+        if not line.startswith("- [") or "] " not in line:
+            return None
+        new_body = (new_body or "").strip()
+        if not new_body:
+            return None
+        prefix = line.split("] ", 1)[0]
+        new_line = f"{prefix}] {new_body}"
+        self.entries[index] = new_line
+        self.write_all()
+        return new_line
 
     def stop(self):
         lines = self.append_entry("SESSION END")
