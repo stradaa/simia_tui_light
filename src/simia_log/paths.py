@@ -46,6 +46,25 @@ def default_exports_dir() -> Path:
     return data_dir() / "exports"
 
 
+def repo_root() -> Path | None:
+    """The source checkout root, when running from an editable install.
+
+    Returns the repo top level (the dir holding ``src/simia_log`` and ``.git``)
+    if this module lives inside a checkout, else ``None`` — e.g. when the package
+    was installed into ``site-packages``.
+    """
+    root = Path(__file__).resolve().parents[2]
+    if (root / ".git").exists() and (root / "src" / "simia_log").is_dir():
+        return root
+    return None
+
+
+def repo_exports_dir() -> Path | None:
+    """The ``exports/`` folder inside the source checkout, if we're in one."""
+    root = repo_root()
+    return root / "exports" if root is not None else None
+
+
 def _find_legacy_config() -> Path | None:
     """Look for an old ``lablog_config.json`` next to where we were launched."""
     candidate = Path.cwd() / LEGACY_CONFIG_NAME

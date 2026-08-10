@@ -12,6 +12,7 @@ from .paths import (
     default_exports_dir,
     default_output_dir,
     migrate_legacy_if_needed,
+    repo_exports_dir,
     save_config,
 )
 
@@ -640,8 +641,16 @@ def export_logs(config):
         print("Export cancelled.")
         return 0
 
+    # Primary destination:
+    #   1. an explicit exports_dir in config always wins;
+    #   2. else the repo's own exports/ folder when running from a checkout
+    #      (easy to find, sits right next to the source);
+    #   3. else the platform data dir.
     exports_value = str(config.get("exports_dir", "") or "").strip()
-    export_dir = Path(exports_value).expanduser() if exports_value else default_exports_dir()
+    if exports_value:
+        export_dir = Path(exports_value).expanduser()
+    else:
+        export_dir = repo_exports_dir() or default_exports_dir()
     export_dir.mkdir(parents=True, exist_ok=True)
     output_name = build_export_filename(monkey, project, start_date, end_date)
     output_path = export_dir / output_name
@@ -649,6 +658,16 @@ def export_logs(config):
     output_path.write_text(html, encoding="utf-8")
 
     print(f"Created packet: {output_path}")
+
+    # Keep a backup copy in the platform data dir whenever the packet landed
+    # somewhere else, so exports are never tied to a single checkout.
+    backup_dir = default_exports_dir()
+    if backup_dir.resolve() != export_dir.resolve():
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        backup_path = backup_dir / output_name
+        backup_path.write_text(html, encoding="utf-8")
+        print(f"Backup copy:    {backup_path}")
+
     print("Open the HTML file in a browser and print to PDF or paper.")
     return 0
 
