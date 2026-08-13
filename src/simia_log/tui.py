@@ -1073,47 +1073,83 @@ class LoggingScreen(Screen):
 
     # -- key dispatch -------------------------------------------------------- #
 
+    # Terminals don't report Caps Lock state, so we infer it from keystrokes.
+    _caps_warned = False
+
     def on_key(self, event) -> None:
         ch = event.character
         if ch is None or not self.logger.session_started or self.input_active:
             return
+        self._check_caps_lock(ch)
         if self.handle_char(ch):
             self._bump_activity()
             self.refresh_mood()
             event.stop()
             event.prevent_default()
 
+    def _check_caps_lock(self, ch: str) -> None:
+        """Warn once when a keystroke suggests Caps Lock is on.
+
+        A terminal never tells an app the Caps Lock state, but on the command
+        screen a lone letter arriving uppercase is a near-certain tell (nobody
+        Shift-holds a single-key command). We warn once, then re-arm on the next
+        lowercase letter — which proves Caps Lock went back off — so the notice
+        can fire again the next time it comes on.
+        """
+        if len(ch) != 1 or not ch.isalpha():
+            return
+        if ch.isupper():
+            if not self._caps_warned:
+                self._caps_warned = True
+                self.app.notify(
+                    "Caps Lock looks like it's on. Commands still work, but "
+                    "check it before typing notes.",
+                    title="Caps Lock",
+                    severity="warning",
+                )
+        else:
+            self._caps_warned = False
+
     def handle_char(self, ch: str) -> bool:
         cfg = self.logger.config
-        if ch == cfg.get("note_key", "n"):
+        # Match commands case-insensitively so Caps Lock (or a stray Shift)
+        # never silently drops a keystroke. Both sides are lowercased; config
+        # and macro keys are single letters, digits, or symbols, all safe to
+        # normalize this way.
+        key = ch.lower()
+
+        def bound(name: str, default: str) -> str:
+            return str(cfg.get(name, default)).lower()
+
+        if key == bound("note_key", "n"):
             self.open_inline("note")
-        elif ch == cfg.get("liquid_key", "l"):
+        elif key == bound("liquid_key", "l"):
             self.open_inline("liquid")
-        elif ch == cfg.get("mark_key", "m"):
+        elif key == bound("mark_key", "m"):
             self.write_lines(self.logger.mark())
-        elif ch == cfg.get("undo_key", "u"):
+        elif key == bound("undo_key", "u"):
             self.action_undo()
-        elif ch == cfg.get("reload_key", "r"):
+        elif key == bound("reload_key", "r"):
             self.logger.reload_config()
             self.refresh_hint()
             self.app.notify("Config reloaded.", title="Config", severity="information")
-        elif ch == cfg.get("print_key", "p"):
+        elif key == bound("print_key", "p"):
             self.reload_log_pane()
-        elif ch == "c":
+        elif key == "c":
             self.action_set_rec()
-        elif ch == "/":
+        elif key == "/":
             self.action_edit_metadata()
-        elif ch == cfg.get("edit_key", "e"):
+        elif key == bound("edit_key", "e"):
             self.action_edit_entry()
-        elif ch == "S":
+        elif key == "s":
             self.action_settings()
-        elif ch == cfg.get("help_key", "h"):
+        elif key == bound("help_key", "h"):
             self.action_help()
-        elif ch == cfg.get("stop_key", "q"):
+        elif key == bound("stop_key", "q"):
             self.action_end()
         else:
             for m in cfg.get("macros", []):
-                if ch == str(m.get("key", "")):
+                if key == str(m.get("key", "")).lower():
                     self.run_macro(m)
                     return True
             return False
